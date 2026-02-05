@@ -1,0 +1,25 @@
+# Sprint logs (agent output, can be large)
+sprints/*/logs/
+
+# Environment
+.env
+.env.*
+
+# Node
+node_modules/
+dist/
+build/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Temp
+*.tmp
+*.bak
