@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 # Central configuration for the dev-team orchestrator
 
+# Ensure NVM-managed binaries are on PATH (needed for background processes
+# that don't inherit the full shell profile)
+if [[ -z "$(command -v claude 2>/dev/null)" && -d "$HOME/.nvm" ]]; then
+  export NVM_DIR="$HOME/.nvm"
+  # shellcheck source=/dev/null
+  [[ -s "$NVM_DIR/nvm.sh" ]] && source "$NVM_DIR/nvm.sh"
+fi
+
 # --- Autonomy Mode ---
 # supervised  — pause for human approval at every major step
 # semi-auto   — pause only before commits and PR creation

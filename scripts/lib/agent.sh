@@ -5,6 +5,9 @@ _AGENT_SH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=config.sh
 [[ -z "$PROJECT_ROOT" ]] && source "${_AGENT_SH_DIR}/config.sh"
 
+# Resolve claude binary path once at source time so background processes find it
+CLAUDE_BIN="${CLAUDE_BIN:-$(command -v claude 2>/dev/null || echo "claude")}"
+
 # Get the model flag for an agent type
 get_model_for_agent() {
   local agent="$1"
@@ -65,7 +68,7 @@ run_agent() {
   # Build claude command
   # --dangerously-skip-permissions is needed for --print mode since agents
   # can't prompt for tool approval. The orchestrator provides human oversight.
-  local cmd=(claude --print --model "$model" --agent "$agent_name" --dangerously-skip-permissions)
+  local cmd=("$CLAUDE_BIN" --print --model "$model" --agent "$agent_name" --dangerously-skip-permissions)
 
   if [[ -n "$budget" ]]; then
     cmd+=(--max-budget-usd "$budget")

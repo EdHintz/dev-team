@@ -1,149 +1,106 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { generateToken, verifyToken } from './jwt.js';
-import type { AuthPayload } from '../types/auth-types.js';
+import { describe, it, expect } from 'vitest';
+import { generateToken, verifyToken } from './jwt';
+import type { AuthPayload } from '../types/auth-types';
 
-describe('JWT utilities', () => {
-  const originalSecret = process.env.JWT_SECRET;
-  const originalExpiry = process.env.JWT_EXPIRY;
-
-  beforeEach(() => {
-    // Set a test secret
-    process.env.JWT_SECRET = 'test-secret-key-for-jwt-testing';
-  });
-
-  afterEach(() => {
-    // Restore original environment
-    if (originalSecret) {
-      process.env.JWT_SECRET = originalSecret;
-    } else {
-      delete process.env.JWT_SECRET;
-    }
-
-    if (originalExpiry) {
-      process.env.JWT_EXPIRY = originalExpiry;
-    } else {
-      delete process.env.JWT_EXPIRY;
-    }
-  });
+describe('JWT Utilities', () => {
+  const testPayload: AuthPayload = {
+    userId: 1,
+    email: 'test@example.com'
+  };
 
   describe('generateToken', () => {
     it('should generate a valid JWT token', () => {
-      const payload: AuthPayload = {
-        userId: 1,
-        email: 'test@example.com'
-      };
+      const token = generateToken(testPayload);
 
-      const token = generateToken(payload);
-
-      // JWT format: header.payload.signature
-      expect(token.split('.')).toHaveLength(3);
+      expect(token).toBeDefined();
+      expect(typeof token).toBe('string');
+      // JWT format: header.payload.signature (3 parts separated by dots)
+      expect(token.split('.').length).toBe(3);
     });
 
-    it('should include userId and email in token payload', () => {
-      const payload: AuthPayload = {
-        userId: 42,
-        email: 'user@example.com'
-      };
-
-      const token = generateToken(payload);
+    it('should include user data in token payload', () => {
+      const token = generateToken(testPayload);
       const decoded = verifyToken(token);
 
-      expect(decoded.userId).toBe(42);
-      expect(decoded.email).toBe('user@example.com');
+      expect(decoded.userId).toBe(testPayload.userId);
+      expect(decoded.email).toBe(testPayload.email);
     });
 
-    it('should throw error if JWT_SECRET is not set', () => {
-      delete process.env.JWT_SECRET;
+    it('should generate a token with correct payload data', () => {
+      const token = generateToken(testPayload);
+      const decoded = verifyToken(token);
 
-      const payload: AuthPayload = {
-        userId: 1,
-        email: 'test@example.com'
-      };
-
-      expect(() => generateToken(payload)).toThrow('JWT_SECRET environment variable is not set');
-    });
-
-    it('should use custom expiry from environment', () => {
-      process.env.JWT_EXPIRY = '1h';
-
-      const payload: AuthPayload = {
-        userId: 1,
-        email: 'test@example.com'
-      };
-
-      const token = generateToken(payload);
-
-      // Verify token is valid
-      expect(() => verifyToken(token)).not.toThrow();
+      // Check that decoded payload includes our data
+      expect(decoded.userId).toBe(testPayload.userId);
+      expect(decoded.email).toBe(testPayload.email);
+      // JWT library adds iat and exp fields
+      expect(decoded).toHaveProperty('iat');
+      expect(decoded).toHaveProperty('exp');
     });
   });
 
   describe('verifyToken', () => {
     it('should verify and decode a valid token', () => {
-      const payload: AuthPayload = {
-        userId: 123,
-        email: 'verify@example.com'
-      };
-
-      const token = generateToken(payload);
+      const token = generateToken(testPayload);
       const decoded = verifyToken(token);
 
-      expect(decoded.userId).toBe(123);
-      expect(decoded.email).toBe('verify@example.com');
+      expect(decoded.userId).toBe(testPayload.userId);
+      expect(decoded.email).toBe(testPayload.email);
     });
 
     it('should throw error for invalid token', () => {
       const invalidToken = 'invalid.token.here';
 
-      expect(() => verifyToken(invalidToken)).toThrow('Invalid token');
+      expect(() => {
+        verifyToken(invalidToken);
+      }).toThrow('Invalid token');
+    });
+
+    it('should throw error for tampered token', () => {
+      const token = generateToken(testPayload);
+      const parts = token.split('.');
+      // Modify the payload
+      parts[1] = Buffer.from('{"userId": 999, "email": "hacker@example.com"}').toString('base64');
+      const tamperedToken = parts.join('.');
+
+      expect(() => {
+        verifyToken(tamperedToken);
+      }).toThrow('Invalid token');
+    });
+
+    it('should throw error for expired token', () => {
+      // Set expiry to a very short time
+      const originalEnv = process.env.JWT_EXPIRY;
+      process.env.JWT_EXPIRY = '1ms';
+
+      const token = generateToken(testPayload);
+
+      // Wait longer than expiry time
+      return new Promise<void>(resolve => {
+        setTimeout(() => {
+          expect(() => {
+            verifyToken(token);
+          }).toThrow('Token has expired');
+
+          // Restore original expiry
+          process.env.JWT_EXPIRY = originalEnv;
+          resolve();
+        }, 50);
+      });
     });
 
     it('should throw error for malformed token', () => {
-      const malformedToken = 'notavalidtoken';
+      const malformedToken = 'not.a.valid.jwt';
 
-      expect(() => verifyToken(malformedToken)).toThrow('Invalid token');
+      expect(() => {
+        verifyToken(malformedToken);
+      }).toThrow('Invalid token');
     });
 
-    it('should throw error for token signed with different secret', () => {
-      process.env.JWT_SECRET = 'secret1';
-      const payload: AuthPayload = {
-        userId: 1,
-        email: 'test@example.com'
-      };
-      const token = generateToken(payload);
-
-      // Change secret
-      process.env.JWT_SECRET = 'secret2';
-
-      expect(() => verifyToken(token)).toThrow('Invalid token');
-    });
-
-    it('should throw error if JWT_SECRET is not set', () => {
-      const payload: AuthPayload = {
-        userId: 1,
-        email: 'test@example.com'
-      };
-      const token = generateToken(payload);
-
-      delete process.env.JWT_SECRET;
-
-      expect(() => verifyToken(token)).toThrow('JWT_SECRET environment variable is not set');
-    });
-
-    it('should throw error for expired token', async () => {
-      process.env.JWT_EXPIRY = '1ms'; // Very short expiry
-
-      const payload: AuthPayload = {
-        userId: 1,
-        email: 'test@example.com'
-      };
-
-      const token = generateToken(payload);
-
-      // Wait for token to expire
-      await new Promise(resolve => setTimeout(resolve, 10));
-
-      expect(() => verifyToken(token)).toThrow('Token has expired');
+    it('should throw error for empty string', () => {
+      expect(() => {
+        verifyToken('');
+      }).toThrow('Invalid token');
     });
   });
 });

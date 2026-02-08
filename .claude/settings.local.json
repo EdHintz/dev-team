@@ -14,7 +14,9 @@
       "Bash(git add:*)",
       "Bash(source:*)",
       "Bash(get_sprint_tasks_ordered:*)",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "Bash(grep:*)",
+      "Bash(ls:*)"
     ]
   }
 }
