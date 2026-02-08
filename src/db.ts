@@ -64,6 +64,14 @@ const db: DbInstance = initDb();
 createSchema(db);
 
 /**
+ * Reset the database - useful for tests
+ * Clears all data from the users table
+ */
+export const resetDatabase = (): void => {
+  db.exec('DELETE FROM users');
+};
+
+/**
  * Export the database instance
  */
 export default db;
