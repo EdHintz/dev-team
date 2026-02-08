@@ -62,7 +62,7 @@ export const requireAuth = (
  */
 export const optionalAuth = (
   req: Request,
-  res: Response,
+  _res: Response,
   next: NextFunction
 ): void => {
   const token = extractToken(req);
