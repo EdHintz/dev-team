@@ -36,9 +36,10 @@ export const generateToken = (payload: AuthPayload): string => {
   const secret = getJwtSecret();
   const expiry = getJwtExpiry();
 
+  // TypeScript has issues with the string literal type, so we cast to any for the options
   return jwt.sign(payload, secret, {
     expiresIn: expiry
-  });
+  } as any);
 };
 
 /**
