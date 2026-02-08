@@ -11,7 +11,10 @@
       "Bash(echo:*)",
       "Bash(done)",
       "Bash(./scripts/run-sprint.sh:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(source:*)",
+      "Bash(get_sprint_tasks_ordered:*)",
+      "Bash(python3:*)"
     ]
   }
 }

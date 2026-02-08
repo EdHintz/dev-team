@@ -77,12 +77,14 @@ run_agent() {
   start_time=$(date +%s)
 
   # Execute agent
+  # Redirect stdin from /dev/null to prevent claude from consuming the caller's
+  # stdin (e.g., when run_agent is called inside a while-read loop).
   local output
   local exit_code
   if [[ -n "$cwd" ]]; then
-    output=$(cd "$cwd" && "${cmd[@]}" "$prompt" 2>&1) || exit_code=$?
+    output=$(cd "$cwd" && "${cmd[@]}" "$prompt" < /dev/null 2>&1) || exit_code=$?
   else
-    output=$("${cmd[@]}" "$prompt" 2>&1) || exit_code=$?
+    output=$("${cmd[@]}" "$prompt" < /dev/null 2>&1) || exit_code=$?
   fi
   exit_code=${exit_code:-0}
 

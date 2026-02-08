@@ -3,10 +3,12 @@
   "by_agent": {
     "researcher": 55,
     "planner": 72,
-    "implementer": 133
+    "implementer": 285
   },
   "by_task": {
-    "1": 133
+    "1": 133,
+    "2": 0,
+    "3": 152
   },
   "sessions": [
     {
@@ -23,6 +25,16 @@
       "agent": "implementer",
       "task": "1",
       "duration_seconds": 133
+    },
+    {
+      "agent": "implementer",
+      "task": "2",
+      "duration_seconds": 0
+    },
+    {
+      "agent": "implementer",
+      "task": "3",
+      "duration_seconds": 152
     }
   ]
 }
