@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Claude CLI wrappers for agent invocation
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_AGENT_SH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=config.sh
-[[ -z "$PROJECT_ROOT" ]] && source "${SCRIPT_DIR}/config.sh"
+[[ -z "$PROJECT_ROOT" ]] && source "${_AGENT_SH_DIR}/config.sh"
 
 # Get the model flag for an agent type
 get_model_for_agent() {
@@ -63,14 +63,12 @@ run_agent() {
   fi
 
   # Build claude command
-  local cmd=(claude --print --model "$model" --agent "$agent_name")
+  # --dangerously-skip-permissions is needed for --print mode since agents
+  # can't prompt for tool approval. The orchestrator provides human oversight.
+  local cmd=(claude --print --model "$model" --agent "$agent_name" --dangerously-skip-permissions)
 
   if [[ -n "$budget" ]]; then
-    cmd+=(--max-cost "$budget")
-  fi
-
-  if [[ -n "$max_turns" ]]; then
-    cmd+=(--max-turns "$max_turns")
+    cmd+=(--max-budget-usd "$budget")
   fi
 
   info "Running ${BOLD}${agent_name}${NC} agent (model: ${model})..."

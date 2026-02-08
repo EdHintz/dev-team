@@ -1,0 +1,28 @@
+{
+  "total": 0,
+  "by_agent": {
+    "researcher": 55,
+    "planner": 72,
+    "implementer": 133
+  },
+  "by_task": {
+    "1": 133
+  },
+  "sessions": [
+    {
+      "agent": "researcher",
+      "task": "",
+      "duration_seconds": 55
+    },
+    {
+      "agent": "planner",
+      "task": "",
+      "duration_seconds": 72
+    },
+    {
+      "agent": "implementer",
+      "task": "1",
+      "duration_seconds": 133
+    }
+  ]
+}
