@@ -168,17 +168,19 @@ Task: ${task_id}
 
 Co-Authored-By: Claude <noreply@anthropic.com>"
 
-  git -C "$target_dir" commit -m "$commit_msg" 2>/dev/null || warn "Nothing to commit for task ${task_id}"
+  if git -C "$target_dir" commit -m "$commit_msg" 2>/dev/null; then
+    # Mark task complete only after a successful commit
+    echo "$task_id" >> "$completed_file"
 
-  # Mark task complete
-  echo "$task_id" >> "$completed_file"
+    # Close GitHub issue
+    if [[ "$has_issues" == "true" && -n "${issue_number:-}" ]]; then
+      update_issue_status "$issue_number" "closed" 2>/dev/null || true
+    fi
 
-  # Close GitHub issue
-  if [[ "$has_issues" == "true" && -n "${issue_number:-}" ]]; then
-    update_issue_status "$issue_number" "closed" 2>/dev/null || true
+    ok "Task ${task_id} complete: ${title}"
+  else
+    warn "Nothing to commit for task ${task_id} — not marking as complete"
   fi
-
-  ok "Task ${task_id} complete: ${title}"
 done < "$task_list_file"
 
 echo ""

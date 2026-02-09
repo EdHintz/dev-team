@@ -2,9 +2,9 @@
 # GitHub CLI helpers for sprint management
 
 # Source config if not already loaded
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_GITHUB_SH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=config.sh
-[[ -z "$PROJECT_ROOT" ]] && source "${SCRIPT_DIR}/config.sh"
+[[ -z "$PROJECT_ROOT" ]] && source "${_GITHUB_SH_DIR}/config.sh"
 
 # --- Repo Helpers ---
 

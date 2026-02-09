@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gh:*)",
+      "Bash(claude:*)",
+      "Bash(chmod:*)",
+      "Bash(bash:*)",
+      "Bash(bash -n:*)",
+      "Bash(for f in scripts/run-sprint.sh scripts/plan-sprint.sh scripts/run-tasks.sh scripts/review-sprint.sh scripts/create-pr.sh scripts/cost-report.sh scripts/lib/config.sh scripts/lib/github.sh scripts/lib/agent.sh)",
+      "Bash(do bash -n \"$f\")",
+      "Bash(echo:*)",
+      "Bash(done)",
+      "Bash(./scripts/run-sprint.sh:*)",
+      "Bash(git add:*)",
+      "Bash(source:*)",
+      "Bash(get_sprint_tasks_ordered:*)",
+      "Bash(python3:*)",
+      "Bash(grep:*)",
+      "Bash(ls:*)"
+    ]
+  }
+}

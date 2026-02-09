@@ -1,0 +1,165 @@
+{
+  "sprint_id": "sprint-20260208-fa65",
+  "spec": "spec.md",
+  "tasks": [
+    {
+      "id": 1,
+      "title": "Bootstrap project and install dependencies",
+      "description": "Initialize the Node.js project from scratch since no application code exists yet. Create package.json with TypeScript, Express, and all required dependencies (bcrypt, jsonwebtoken, better-sqlite3, express-rate-limit, cookie-parser). Set up tsconfig.json for ES modules. Create the directory structure: src/{models,routes,middleware,services,utils,types}. Add npm scripts for build, start, dev, and test (using vitest). Create a .env.example documenting JWT_SECRET, JWT_EXPIRY, BCRYPT_ROUNDS, DB_PATH, PORT.",
+      "agent": "implementer",
+      "depends_on": [],
+      "complexity": "medium",
+      "labels": ["chore", "backend"],
+      "acceptance_criteria": [
+        "package.json exists with all required dependencies",
+        "tsconfig.json configured for ES modules and strict mode",
+        "Directory structure src/{models,routes,middleware,services,utils,types} exists",
+        "npm install completes without errors",
+        "npm run build compiles TypeScript successfully",
+        ".env.example documents all required environment variables"
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Set up SQLite database and User model",
+      "description": "Create the database initialization module (src/db.ts) using better-sqlite3 for synchronous SQLite access. Create the User model (src/models/user.ts) with schema: id (INTEGER PRIMARY KEY AUTOINCREMENT), email (TEXT UNIQUE NOT NULL), password_hash (TEXT NOT NULL), created_at (TEXT DEFAULT CURRENT_TIMESTAMP). Include functions: createUser(email, passwordHash), findUserByEmail(email), findUserById(id). Add a unique index on email for fast lookups. The database file path should be configurable via DB_PATH environment variable, defaulting to ./data/dev.db. Ensure the data directory is created if it doesn't exist. Add data/ to .gitignore.",
+      "agent": "implementer",
+      "depends_on": [1],
+      "complexity": "medium",
+      "labels": ["feat", "backend"],
+      "acceptance_criteria": [
+        "src/db.ts initializes SQLite and creates tables on first run",
+        "src/models/user.ts exports createUser, findUserByEmail, findUserById",
+        "Users table has columns: id, email, password_hash, created_at",
+        "Unique index exists on email column",
+        "DB_PATH is configurable via environment variable",
+        "data/ directory is in .gitignore"
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Implement password hashing and JWT utilities",
+      "description": "Create password utilities (src/utils/password.ts) with hashPassword(plain) and verifyPassword(plain, hash) using bcrypt with configurable rounds (BCRYPT_ROUNDS env var, default 10, minimum 10). Create JWT utilities (src/utils/jwt.ts) with generateToken(payload) and verifyToken(token) using jsonwebtoken. Token payload should include userId and email. Token expiration configurable via JWT_EXPIRY (default '24h'). JWT_SECRET must be read from environment variable with a clear error if not set. Create shared TypeScript types (src/types/auth-types.ts): User, AuthPayload (JWT payload), RegisterRequest, LoginRequest, AuthResponse.",
+      "agent": "implementer",
+      "depends_on": [1],
+      "complexity": "small",
+      "labels": ["feat", "backend"],
+      "acceptance_criteria": [
+        "hashPassword returns a bcrypt hash with at least 10 rounds",
+        "verifyPassword correctly compares plain text against bcrypt hash",
+        "generateToken produces a valid JWT with userId and email in payload",
+        "verifyToken validates and decodes a JWT, throwing on invalid/expired tokens",
+        "JWT_SECRET is required — module throws if not set",
+        "TypeScript types are exported for User, AuthPayload, RegisterRequest, LoginRequest"
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Implement auth service layer",
+      "description": "Create the authentication service (src/services/auth-service.ts) that encapsulates business logic. Implement: register(email, password) — validates email format and password length (>=8 chars), hashes password, creates user in DB, returns JWT. Throws on duplicate email (409). login(email, password) — finds user by email, verifies password, returns JWT. Throws 401 on invalid credentials with a generic message (don't reveal whether email or password was wrong). getCurrentUser(userId) — retrieves user by ID, returns user without password_hash. Create a custom error utility (src/utils/errors.ts) with an AppError class that includes statusCode for HTTP mapping.",
+      "agent": "implementer",
+      "depends_on": [2, 3],
+      "complexity": "medium",
+      "labels": ["feat", "backend"],
+      "acceptance_criteria": [
+        "register() creates a user and returns a JWT token",
+        "register() rejects passwords shorter than 8 characters (400)",
+        "register() rejects duplicate emails (409)",
+        "login() returns a JWT for valid credentials",
+        "login() returns 401 for invalid email or password without revealing which is wrong",
+        "getCurrentUser() returns user data without password_hash",
+        "AppError class supports statusCode for HTTP error mapping"
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Create auth middleware",
+      "description": "Create JWT authentication middleware (src/middleware/auth-middleware.ts) for protecting routes. The middleware should: extract JWT from the HTTP-only cookie (cookie name: 'token') OR from the Authorization header (Bearer token format). Verify the token using verifyToken utility. Attach the decoded user payload to req.user (extend Express Request type). Return 401 with JSON error if token is missing, invalid, or expired. Export both requireAuth (returns 401 if not authenticated) and optionalAuth (attaches user if present but doesn't fail).",
+      "agent": "implementer",
+      "depends_on": [3],
+      "complexity": "small",
+      "labels": ["feat", "backend"],
+      "acceptance_criteria": [
+        "requireAuth middleware returns 401 if no token is present",
+        "requireAuth middleware returns 401 if token is invalid or expired",
+        "requireAuth middleware attaches decoded user to req.user on valid token",
+        "Middleware reads token from HTTP-only cookie or Authorization header",
+        "Express Request type is extended with optional user property"
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Create Express server and auth routes",
+      "description": "Create the Express server (src/server.ts) with JSON body parsing, cookie-parser, and CORS configured. Create auth routes (src/routes/auth-routes.ts) with: POST /api/auth/register — calls authService.register, sets HTTP-only cookie (httpOnly, sameSite strict, secure in production, maxAge 24h), returns { user, token }. POST /api/auth/login — calls authService.login, sets cookie, returns { user, token }. POST /api/auth/logout — clears the token cookie, returns { message }. GET /api/auth/me — protected with requireAuth middleware, returns { user }. Add rate limiting on /api/auth/login (5 requests per minute per IP using express-rate-limit). Add global error handling middleware that maps AppError to proper HTTP responses. Export app separately from listen() for testing.",
+      "agent": "implementer",
+      "depends_on": [4, 5],
+      "complexity": "large",
+      "labels": ["feat", "backend"],
+      "acceptance_criteria": [
+        "POST /api/auth/register creates user and returns JWT in cookie + body",
+        "POST /api/auth/login returns JWT for valid credentials",
+        "POST /api/auth/login returns 401 for invalid credentials",
+        "POST /api/auth/login is rate-limited to 5 requests per minute per IP",
+        "POST /api/auth/logout clears the token cookie",
+        "GET /api/auth/me returns user data when authenticated",
+        "GET /api/auth/me returns 401 when not authenticated",
+        "HTTP-only cookie is set with sameSite strict and secure in production",
+        "Global error handler maps AppError to correct HTTP status codes",
+        "Express app is exported separately from server.listen for testability"
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Write unit tests for utilities and service",
+      "description": "Write unit tests for the password utilities (src/utils/password.test.ts): test hashing produces valid bcrypt hash, test verifying correct password returns true, test verifying wrong password returns false. Write unit tests for JWT utilities (src/utils/jwt.test.ts): test generating a token, test verifying a valid token returns correct payload, test verifying an expired token throws, test verifying a tampered token throws. Write unit tests for the auth service (src/services/auth-service.test.ts): test register creates user and returns token, test register rejects short password, test register rejects duplicate email, test login with valid credentials, test login with invalid credentials, test getCurrentUser returns user without hash. Use vitest. All tests must pass with npm test.",
+      "agent": "tester",
+      "depends_on": [4],
+      "complexity": "medium",
+      "labels": ["test", "backend"],
+      "acceptance_criteria": [
+        "Password utility tests cover hashing and verification (correct and incorrect)",
+        "JWT utility tests cover generation, valid verification, expired token, and tampered token",
+        "Auth service tests cover register (success, short password, duplicate email)",
+        "Auth service tests cover login (valid credentials, invalid credentials)",
+        "Auth service tests cover getCurrentUser returning user without password_hash",
+        "All tests pass with npm test"
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Write integration tests for auth endpoints",
+      "description": "Write integration tests (src/routes/auth-routes.test.ts) using supertest against the Express app. Test the full request/response cycle: POST /api/auth/register with valid data returns 201 + JWT cookie + user in body. POST /api/auth/register with duplicate email returns 409. POST /api/auth/register with short password returns 400. POST /api/auth/login with valid credentials returns 200 + JWT cookie. POST /api/auth/login with invalid credentials returns 401. POST /api/auth/logout clears cookie. GET /api/auth/me with valid token returns 200 + user data. GET /api/auth/me without token returns 401. Test that passwords are never returned in any response. Verify cookie attributes (httpOnly, sameSite). Each test should use a fresh database (in-memory or temp file).",
+      "agent": "tester",
+      "depends_on": [6],
+      "complexity": "large",
+      "labels": ["test", "backend"],
+      "acceptance_criteria": [
+        "Register endpoint tests: success (201), duplicate email (409), short password (400)",
+        "Login endpoint tests: valid credentials (200 + cookie), invalid credentials (401)",
+        "Logout endpoint test: clears token cookie",
+        "GET /api/auth/me tests: authenticated (200 + user), unauthenticated (401)",
+        "No response body ever contains password_hash",
+        "Cookie attributes verified: httpOnly and sameSite",
+        "Each test uses a clean database to prevent state leakage",
+        "All tests pass with npm test"
+      ]
+    },
+    {
+      "id": 9,
+      "title": "Final integration verification and cleanup",
+      "description": "Run the full test suite and verify everything works end-to-end. Check that all acceptance criteria from the spec are met: register, login, logout, /me endpoint, password hashing, 401 for unauthenticated, rate limiting. Verify TypeScript compiles with no errors (npm run build). Verify no passwords are stored in plaintext by inspecting test DB. Review that all files follow project conventions (kebab-case filenames, ES modules, camelCase functions, PascalCase types). Ensure .gitignore covers node_modules, data/, dist/, .env. Fix any remaining issues.",
+      "agent": "implementer",
+      "depends_on": [7, 8],
+      "complexity": "small",
+      "labels": ["chore", "backend"],
+      "acceptance_criteria": [
+        "npm run build completes with no TypeScript errors",
+        "npm test passes all unit and integration tests",
+        "All 9 acceptance criteria from the spec are satisfied",
+        "File naming follows kebab-case convention",
+        "ES modules used throughout (no require/module.exports)",
+        ".gitignore covers node_modules, data/, dist/, .env"
+      ]
+    }
+  ]
+}

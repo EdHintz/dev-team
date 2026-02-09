@@ -130,11 +130,12 @@ info "Phase 1c: Creating GitHub issues..."
 if gh repo view &>/dev/null; then
   ensure_labels
 
-  milestone=$(create_milestone "$sprint_id" "Sprint planned from $(basename "$spec_file")")
-  echo "$milestone" > "${sprint_dir}/.milestone"
-  ok "Created milestone #${milestone}"
+  milestone_number=$(create_milestone "$sprint_id" "Sprint planned from $(basename "$spec_file")")
+  echo "$milestone_number" > "${sprint_dir}/.milestone"
+  ok "Created milestone #${milestone_number}"
 
-  # Create issues from plan
+  # Create issues from plan — use sprint_id as milestone title
+  milestone_title="$sprint_id"
   python3 -c "
 import json, subprocess, sys
 
@@ -159,7 +160,7 @@ for task in plan['tasks']:
         ['gh', 'issue', 'create',
          '--title', f\"[{plan['sprint_id']}] {task['title']}\",
          '--body', body,
-         '--milestone', '${milestone}',
+         '--milestone', '${milestone_title}',
          '--label', labels],
         capture_output=True, text=True
     )

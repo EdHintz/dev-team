@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # Claude CLI wrappers for agent invocation
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_AGENT_SH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=config.sh
-[[ -z "$PROJECT_ROOT" ]] && source "${SCRIPT_DIR}/config.sh"
+[[ -z "$PROJECT_ROOT" ]] && source "${_AGENT_SH_DIR}/config.sh"
+
+# Resolve claude binary path once at source time so background processes find it
+CLAUDE_BIN="${CLAUDE_BIN:-$(command -v claude 2>/dev/null || echo "claude")}"
 
 # Get the model flag for an agent type
 get_model_for_agent() {
@@ -63,14 +66,12 @@ run_agent() {
   fi
 
   # Build claude command
-  local cmd=(claude --print --model "$model" --agent "$agent_name")
+  # --dangerously-skip-permissions is needed for --print mode since agents
+  # can't prompt for tool approval. The orchestrator provides human oversight.
+  local cmd=("$CLAUDE_BIN" --print --model "$model" --agent "$agent_name" --dangerously-skip-permissions)
 
   if [[ -n "$budget" ]]; then
-    cmd+=(--max-cost "$budget")
-  fi
-
-  if [[ -n "$max_turns" ]]; then
-    cmd+=(--max-turns "$max_turns")
+    cmd+=(--max-budget-usd "$budget")
   fi
 
   info "Running ${BOLD}${agent_name}${NC} agent (model: ${model})..."
@@ -79,12 +80,14 @@ run_agent() {
   start_time=$(date +%s)
 
   # Execute agent
+  # Redirect stdin from /dev/null to prevent claude from consuming the caller's
+  # stdin (e.g., when run_agent is called inside a while-read loop).
   local output
   local exit_code
   if [[ -n "$cwd" ]]; then
-    output=$(cd "$cwd" && "${cmd[@]}" "$prompt" 2>&1) || exit_code=$?
+    output=$(cd "$cwd" && "${cmd[@]}" "$prompt" < /dev/null 2>&1) || exit_code=$?
   else
-    output=$("${cmd[@]}" "$prompt" 2>&1) || exit_code=$?
+    output=$("${cmd[@]}" "$prompt" < /dev/null 2>&1) || exit_code=$?
   fi
   exit_code=${exit_code:-0}
 

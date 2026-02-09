@@ -1,0 +1,63 @@
+{
+  "total": 0,
+  "by_agent": {
+    "researcher": 55,
+    "planner": 72,
+    "implementer": 1164
+  },
+  "by_task": {
+    "1": 133,
+    "2": 177,
+    "3": 152,
+    "4": 256,
+    "5": 111,
+    "6": 335
+  },
+  "sessions": [
+    {
+      "agent": "researcher",
+      "task": "",
+      "duration_seconds": 55
+    },
+    {
+      "agent": "planner",
+      "task": "",
+      "duration_seconds": 72
+    },
+    {
+      "agent": "implementer",
+      "task": "1",
+      "duration_seconds": 133
+    },
+    {
+      "agent": "implementer",
+      "task": "2",
+      "duration_seconds": 0
+    },
+    {
+      "agent": "implementer",
+      "task": "3",
+      "duration_seconds": 152
+    },
+    {
+      "agent": "implementer",
+      "task": "4",
+      "duration_seconds": 256
+    },
+    {
+      "agent": "implementer",
+      "task": "5",
+      "duration_seconds": 111
+    },
+    {
+      "agent": "implementer",
+      "task": "6",
+      "duration_seconds": 335
+    },
+    {
+      "agent": "implementer",
+      "task": "2",
+      "duration_seconds": 177
+    }
+  ]
+}
