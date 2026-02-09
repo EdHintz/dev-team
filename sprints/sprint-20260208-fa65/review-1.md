@@ -1,0 +1,3 @@
+[0;34mℹ[0m Running [1mreviewer[0m agent (model: sonnet)...
+[0;32m✓[0m Agent reviewer completed in 8s
+Error: Exceeded USD budget (0.5)

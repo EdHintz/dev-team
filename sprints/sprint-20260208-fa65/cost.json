@@ -3,7 +3,9 @@
   "by_agent": {
     "researcher": 55,
     "planner": 72,
-    "implementer": 1164
+    "implementer": 1166,
+    "tester": 325,
+    "reviewer": 8
   },
   "by_task": {
     "1": 133,
@@ -11,7 +13,12 @@
     "3": 152,
     "4": 256,
     "5": 111,
-    "6": 335
+    "6": 335,
+    "7": 0,
+    "8": 139,
+    "9": 2,
+    "review-tests-1": 186,
+    "review-1": 8
   },
   "sessions": [
     {
@@ -58,6 +65,31 @@
       "agent": "implementer",
       "task": "2",
       "duration_seconds": 177
+    },
+    {
+      "agent": "tester",
+      "task": "7",
+      "duration_seconds": 0
+    },
+    {
+      "agent": "tester",
+      "task": "8",
+      "duration_seconds": 139
+    },
+    {
+      "agent": "implementer",
+      "task": "9",
+      "duration_seconds": 2
+    },
+    {
+      "agent": "tester",
+      "task": "review-tests-1",
+      "duration_seconds": 186
+    },
+    {
+      "agent": "reviewer",
+      "task": "review-1",
+      "duration_seconds": 8
     }
   ]
 }
