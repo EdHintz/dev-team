@@ -1,7 +1,7 @@
 // Sprint data hooks
 
 import { useState, useEffect, useCallback } from 'react';
-import type { SprintSummary, SprintDetail } from '@shared/types.js';
+import type { SprintSummary, SprintDetail, AutonomyMode } from '@shared/types.js';
 
 const API_BASE = '/api';
 
@@ -54,11 +54,11 @@ export function useSprintDetail(sprintId: string | undefined) {
   return { sprint, loading, error, refresh, setSprint };
 }
 
-export async function createSprint(specPath: string, targetDir: string, implementerCount = 2): Promise<{ id: string }> {
+export async function createSprint(specPath: string, targetDir: string, developerCount = 2, autonomyMode?: AutonomyMode): Promise<{ id: string }> {
   const res = await fetch(`${API_BASE}/sprints`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ specPath, targetDir, implementerCount }),
+    body: JSON.stringify({ specPath, targetDir, developerCount, autonomyMode }),
   });
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
@@ -122,6 +122,22 @@ export async function restartSprint(sprintId: string, targetDir?: string): Promi
 
 export async function retryTask(sprintId: string, taskId: number): Promise<void> {
   const res = await fetch(`${API_BASE}/tasks/${sprintId}/${taskId}/retry`, { method: 'POST' });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || `HTTP ${res.status}`);
+  }
+}
+
+export async function completeSprint(sprintId: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/sprints/${sprintId}/complete`, { method: 'POST' });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || `HTTP ${res.status}`);
+  }
+}
+
+export async function mergeSprintLocal(sprintId: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/sprints/${sprintId}/merge-local`, { method: 'POST' });
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
     throw new Error(data.error || `HTTP ${res.status}`);

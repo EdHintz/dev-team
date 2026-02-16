@@ -8,6 +8,7 @@ import { WEB_DIR } from './config.js';
 import { sprintRoutes } from './routes/sprint-routes.js';
 import { taskRoutes } from './routes/task-routes.js';
 import { systemRoutes } from './routes/system-routes.js';
+import { appRoutes } from './routes/app-routes.js';
 
 export function createApp(): express.Application {
   const app = express();
@@ -16,6 +17,7 @@ export function createApp(): express.Application {
   app.use(express.json());
 
   // API routes
+  app.use('/api/apps', appRoutes);
   app.use('/api/sprints', sprintRoutes);
   app.use('/api/tasks', taskRoutes);
   app.use('/api/system', systemRoutes);

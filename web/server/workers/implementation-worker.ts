@@ -1,13 +1,13 @@
 // Implementation worker: runs implementer agents on assigned tasks
-// One worker instance per implementer, consuming from their dedicated queue
+// One worker instance per developer, consuming from their dedicated queue
 
 import { Worker, Job } from 'bullmq';
 import fs from 'node:fs';
 import path from 'node:path';
 import { getRedisConnection } from '../utils/redis.js';
-import { SPRINTS_DIR, BUDGETS } from '../config.js';
+import { BUDGETS } from '../config.js';
 import { runAgentJob } from './base-worker.js';
-import { setTaskStatus, getSprintOrThrow, getSprint } from '../services/state-service.js';
+import { setTaskStatus, getSprintOrThrow, getSprint, getSprintDir } from '../services/state-service.js';
 import { commitInWorktree } from '../services/git-service.js';
 import { broadcast } from '../websocket/ws-server.js';
 import { createLogger } from '../utils/logger.js';
@@ -19,15 +19,15 @@ interface ImplementationJobData {
   sprintId: string;
   taskId: number;
   taskDetails: Task;
-  implementerId: string;
+  developerId: string;
   targetDir: string;
   fixCycle?: number;
   reviewFindings?: string;
 }
 
-export function startImplementationWorker(implementerId: string): Worker {
+export function startImplementationWorker(developerId: string): Worker {
   const connection = getRedisConnection();
-  const queueName = `implementation-${implementerId}`;
+  const queueName = `implementation-${developerId}`;
 
   const worker = new Worker(queueName, async (job: Job<ImplementationJobData>) => {
     const { sprintId, taskId, taskDetails, targetDir, fixCycle, reviewFindings } = job.data;
@@ -37,24 +37,24 @@ export function startImplementationWorker(implementerId: string): Worker {
     const sprintState = getSprint(sprintId);
     if (sprintState?.status === 'paused') {
       log.info(`Sprint ${sprintId} is paused, delaying task ${taskId}`);
-      if (taskId > 0) setTaskStatus(sprintId, taskId, 'queued', implementerId);
+      if (taskId > 0) setTaskStatus(sprintId, taskId, 'queued', developerId);
       throw new Error('SPRINT_PAUSED');
     }
 
     const sprint = getSprintOrThrow(sprintId);
-    const worktreePath = sprint.worktreePaths.get(implementerId);
-    const cwd = worktreePath || targetDir;
+    const worktreePath = sprint.worktreePaths.get(developerId);
+    const cwd = (worktreePath && fs.existsSync(worktreePath)) ? worktreePath : targetDir;
 
     // Build shared context
-    const researchFile = path.join(SPRINTS_DIR, sprintId, 'research.md');
+    const researchFile = path.join(getSprintDir(sprintId), 'research.md');
     const research = fs.existsSync(researchFile) ? fs.readFileSync(researchFile, 'utf-8') : '';
 
     if (isFixJob) {
       // --- Fix job: address review findings ---
-      log.info(`${implementerId} starting fix cycle ${fixCycle} for ${sprintId}`);
-      broadcast({ type: 'task:status', sprintId, taskId: 0, status: 'in-progress', implementerId });
+      log.info(`${developerId} starting fix cycle ${fixCycle} for ${sprintId}`);
+      broadcast({ type: 'task:status', sprintId, taskId: 0, status: 'in-progress', developerId });
 
-      const reviewFile = path.join(SPRINTS_DIR, sprintId, `review-${fixCycle}.md`);
+      const reviewFile = path.join(getSprintDir(sprintId), `review-${fixCycle}.md`);
       const reviewContent = fs.existsSync(reviewFile) ? fs.readFileSync(reviewFile, 'utf-8') : (reviewFindings || '');
 
       const prompt = `You are fixing issues found during review cycle ${fixCycle} of sprint ${sprintId}.
@@ -84,8 +84,8 @@ Instructions:
       const commitMessage = `fix(${sprintId}): address review cycle ${fixCycle} findings\n\nSprint: ${sprintId}\n\nCo-Authored-By: Claude <noreply@anthropic.com>`;
       await commitInWorktree(cwd, commitMessage);
 
-      log.info(`${implementerId} completed fix cycle ${fixCycle} for ${sprintId}`);
-      broadcast({ type: 'task:status', sprintId, taskId: 0, status: 'completed', implementerId });
+      log.info(`${developerId} completed fix cycle ${fixCycle} for ${sprintId}`);
+      broadcast({ type: 'task:status', sprintId, taskId: 0, status: 'completed', developerId });
 
       // Enqueue next review cycle
       const { enqueueReview } = await import('../queues/queue-manager.js');
@@ -95,12 +95,12 @@ Instructions:
     }
 
     // --- Normal implementation job ---
-    log.info(`${implementerId} starting task ${taskId}: ${taskDetails.title}`);
+    log.info(`${developerId} starting task ${taskId}: ${taskDetails.title}`);
 
-    setTaskStatus(sprintId, taskId, 'in-progress', implementerId);
-    broadcast({ type: 'task:status', sprintId, taskId, status: 'in-progress', implementerId });
+    setTaskStatus(sprintId, taskId, 'in-progress', developerId);
+    broadcast({ type: 'task:status', sprintId, taskId, status: 'in-progress', developerId });
 
-    const planFile = path.join(SPRINTS_DIR, sprintId, 'plan.json');
+    const planFile = path.join(getSprintDir(sprintId), 'plan.json');
     const planContent = fs.existsSync(planFile) ? fs.readFileSync(planFile, 'utf-8') : '';
 
     const prompt = `You are implementing task ${taskId} of sprint ${sprintId}.
@@ -135,12 +135,17 @@ Instructions:
     const commitMessage = `feat(${sprintId}): task ${taskId} - ${taskDetails.title}\n\nSprint: ${sprintId}\nTask: ${taskId}\n\nCo-Authored-By: Claude <noreply@anthropic.com>`;
     await commitInWorktree(cwd, commitMessage);
 
-    setTaskStatus(sprintId, taskId, 'completed', implementerId);
-    broadcast({ type: 'task:status', sprintId, taskId, status: 'completed', implementerId });
+    setTaskStatus(sprintId, taskId, 'completed', developerId);
+    broadcast({ type: 'task:status', sprintId, taskId, status: 'completed', developerId });
 
-    log.info(`${implementerId} completed task ${taskId}`);
+    log.info(`${developerId} completed task ${taskId}`);
 
-    await checkWaveCompletion(sprintId, taskDetails.wave || 1);
+    try {
+      await checkWaveCompletion(sprintId, taskDetails.wave || 1);
+    } catch (waveErr) {
+      log.error(`Wave completion check failed for ${sprintId} wave ${taskDetails.wave || 1}`, { error: String(waveErr) });
+      broadcast({ type: 'error', sprintId, message: `Wave transition failed: ${waveErr instanceof Error ? waveErr.message : String(waveErr)}` });
+    }
 
     return { success: true, duration: result.durationSeconds };
   }, {
@@ -156,13 +161,20 @@ Instructions:
     log.error(`Implementation job failed: ${err.message}`, { jobId: job?.id });
     if (job) {
       const { sprintId, taskId } = job.data as ImplementationJobData;
-      setTaskStatus(sprintId, taskId, 'failed', implementerId);
-      broadcast({ type: 'task:status', sprintId, taskId, status: 'failed', implementerId });
+      // Don't override a task that already completed (e.g., wave transition failed after task success)
+      const currentState = getSprint(sprintId)?.tasks.get(taskId);
+      if (currentState?.status === 'completed') {
+        log.warn(`Task ${taskId} already completed — not marking as failed`);
+        broadcast({ type: 'error', sprintId, message: `Post-task error for task ${taskId}: ${err.message}` });
+        return;
+      }
+      setTaskStatus(sprintId, taskId, 'failed', developerId);
+      broadcast({ type: 'task:status', sprintId, taskId, status: 'failed', developerId });
       broadcast({ type: 'error', sprintId, message: `Task ${taskId} failed: ${err.message}` });
     }
   });
 
-  log.info(`Implementation worker started for ${implementerId}`);
+  log.info(`Implementation worker started for ${developerId}`);
   return worker;
 }
 
@@ -186,7 +198,7 @@ async function checkWaveCompletion(sprintId: string, wave: number): Promise<void
   log.info(`Wave ${wave} complete for ${sprintId}`);
   broadcast({ type: 'wave:completed', sprintId, wave });
 
-  const implementerIds = sprint.implementers.map((impl) => impl.id);
+  const developers = sprint.developers.map((dev) => ({ id: dev.id, name: dev.name }));
 
   // Find the next wave
   const nextWave = wave + 1;
@@ -199,7 +211,7 @@ async function checkWaveCompletion(sprintId: string, wave: number): Promise<void
     log.info(`All implementation waves complete for ${sprintId}, finalizing git`);
 
     const { finalizeImplementation } = await import('../services/git-service.js');
-    await finalizeImplementation(sprint.targetDir, sprintId, implementerIds);
+    await finalizeImplementation(sprint.targetDir, sprintId, developers);
 
     const { setSprintStatus } = await import('../services/state-service.js');
     setSprintStatus(sprintId, 'reviewing');
@@ -213,14 +225,15 @@ async function checkWaveCompletion(sprintId: string, wave: number): Promise<void
   // Merge this wave's work and reset worktrees for the next wave
   log.info(`Merging wave ${wave} and preparing wave ${nextWave} for ${sprintId}`);
   const { mergeWaveAndReset } = await import('../services/git-service.js');
-  const mergeResults = await mergeWaveAndReset(sprint.targetDir, sprintId, implementerIds);
+  const mergeResults = await mergeWaveAndReset(sprint.targetDir, sprintId, developers);
 
   const failedMerges = mergeResults.filter((r) => !r.success);
-  for (const implId of implementerIds) {
-    const idx = implementerIds.indexOf(implId);
+  for (const dev of developers) {
+    const idx = developers.findIndex((d) => d.id === dev.id);
+    const devId = dev.id;
     const result = mergeResults[idx];
     if (result) {
-      broadcast({ type: 'merge:completed', sprintId, implementerId: implId, success: result.success, conflicts: result.conflicts });
+      broadcast({ type: 'merge:completed', sprintId, developerId: devId, success: result.success, conflicts: result.conflicts });
     }
   }
   if (failedMerges.length > 0) {

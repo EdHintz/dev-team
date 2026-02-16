@@ -4,10 +4,11 @@ import { Worker, Job } from 'bullmq';
 import fs from 'node:fs';
 import path from 'node:path';
 import { getRedisConnection } from '../utils/redis.js';
-import { SPRINTS_DIR, BUDGETS } from '../config.js';
+import { BUDGETS } from '../config.js';
 import { runAgentJob } from './base-worker.js';
-import { setSprintStatus, setSprintPlan } from '../services/state-service.js';
+import { setSprintStatus, setSprintPlan, getSprintDir, sprintNeedsApproval } from '../services/state-service.js';
 import { broadcast } from '../websocket/ws-server.js';
+import { startImplementation } from '../services/sprint-lifecycle.js';
 import { createLogger } from '../utils/logger.js';
 import type { Plan } from '../../shared/types.js';
 
@@ -17,18 +18,18 @@ interface PlanningJobData {
   sprintId: string;
   specPath: string;
   targetDir: string;
-  implementerCount: number;
+  developerCount: number;
 }
 
 export function startPlanningWorker(): Worker {
   const connection = getRedisConnection();
 
   const worker = new Worker('planning', async (job: Job<PlanningJobData>) => {
-    const { sprintId, specPath, targetDir, implementerCount } = job.data;
-    log.info(`Starting planning for ${sprintId}`, { implementerCount });
+    const { sprintId, specPath, targetDir, developerCount } = job.data;
+    log.info(`Starting planning for ${sprintId}`, { developerCount });
 
     const spec = fs.readFileSync(specPath, 'utf-8');
-    const researchFile = path.join(SPRINTS_DIR, sprintId, 'research.md');
+    const researchFile = path.join(getSprintDir(sprintId), 'research.md');
     const research = fs.existsSync(researchFile) ? fs.readFileSync(researchFile, 'utf-8') : '';
 
     const prompt = `You are planning a sprint.
@@ -43,20 +44,24 @@ ${research}
 
 Target project directory: ${targetDir}
 
-Number of implementers: ${implementerCount}
+Number of developers: ${developerCount}
 
-IMPORTANT: You must distribute tasks across ${implementerCount} implementers. For each task, include:
-- "assigned_to": which implementer should do it ("implementer-1", "implementer-2", etc.)
+IMPORTANT: You must distribute tasks across ${developerCount} developers. For each task, include:
+- "assigned_to": which developer should do it ("developer-1", "developer-2", etc.)
 - "files_touched": list of files this task will likely create or modify
-- "wave": execution wave number (tasks in the same wave with different implementers run in parallel)
+- "wave": execution wave number (tasks in the same wave with different developers run in parallel)
 
 Distribution guidelines:
-- Group tasks by file domain to minimize cross-implementer file overlap
-- Tasks in the same wave assigned to different implementers MUST NOT touch the same files
-- Minimize cross-implementer dependencies (task A on impl-1 depending on task B on impl-2)
+- Group tasks by file domain to minimize cross-developer file overlap
+- Tasks in the same wave assigned to different developers MUST NOT touch the same files
+- Minimize cross-developer dependencies (task A on dev-1 depending on task B on dev-2)
 - Wave 1 has tasks with no dependencies; subsequent waves depend on prior waves completing
 
-Write the plan to: ${path.join(SPRINTS_DIR, sprintId, 'plan.json')}`;
+IMPORTANT: Include an "estimates" object in the plan JSON with:
+- "ai_team": estimated wall-clock time for this AI dev team to complete the sprint (e.g. "~25 minutes"). Consider each task takes roughly 3-8 min by complexity (small ~3min, medium ~5min, large ~8min), and same-wave tasks run in parallel.
+- "human_team": estimated time for ${developerCount} human developer(s) to implement the same spec (e.g. "~3-4 days"). Use realistic professional estimates including code review and testing.
+
+Write the plan to: ${path.join(getSprintDir(sprintId), 'plan.json')}`;
 
     const result = await runAgentJob(job, 'planner', prompt, {
       budget: String(BUDGETS.plan),
@@ -64,23 +69,41 @@ Write the plan to: ${path.join(SPRINTS_DIR, sprintId, 'plan.json')}`;
     });
 
     // Read the plan from disk (the planner agent should have written it)
-    const planFile = path.join(SPRINTS_DIR, sprintId, 'plan.json');
+    const planFile = path.join(getSprintDir(sprintId), 'plan.json');
     if (!fs.existsSync(planFile)) {
       throw new Error('Planner did not create plan.json');
     }
 
     const plan: Plan = JSON.parse(fs.readFileSync(planFile, 'utf-8'));
 
-    // Enrich plan with implementer_count if not set
-    plan.implementer_count = plan.implementer_count || implementerCount;
+    // Enrich plan with developer_count if not set
+    plan.developer_count = plan.developer_count || developerCount;
 
     // Save enriched plan and update state
     fs.writeFileSync(planFile, JSON.stringify(plan, null, 2));
     setSprintPlan(sprintId, plan);
 
-    // Transition to awaiting approval
-    setSprintStatus(sprintId, 'awaiting-approval');
-    broadcast({ type: 'sprint:status', sprintId, status: 'awaiting-approval' });
+    // Check if plan needs human approval based on autonomy mode
+    if (sprintNeedsApproval(sprintId, 'plan')) {
+      setSprintStatus(sprintId, 'awaiting-approval');
+      broadcast({ type: 'sprint:status', sprintId, status: 'awaiting-approval' });
+      log.info(`Plan requires approval for ${sprintId}`);
+    } else {
+      // Auto-approve: skip waiting and start implementation directly
+      log.info(`Auto-approving plan for ${sprintId} (autonomy mode)`);
+      setSprintStatus(sprintId, 'approved');
+      broadcast({ type: 'sprint:status', sprintId, status: 'approved' });
+
+      try {
+        await startImplementation(sprintId);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Unknown error';
+        log.error(`Auto-approve implementation start failed for ${sprintId}: ${message}`);
+        setSprintStatus(sprintId, 'awaiting-approval');
+        broadcast({ type: 'sprint:status', sprintId, status: 'awaiting-approval' });
+        broadcast({ type: 'error', sprintId, message: `Auto-start failed, manual approval required: ${message}` });
+      }
+    }
 
     return { success: true, duration: result.durationSeconds, taskCount: plan.tasks.length };
   }, {

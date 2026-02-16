@@ -7,14 +7,14 @@ import { startImplementationWorker } from './implementation-worker.js';
 import { startTestingWorker } from './testing-worker.js';
 import { startReviewWorker } from './review-worker.js';
 import { startPrWorker } from './pr-worker.js';
-import { DEFAULT_IMPLEMENTER_COUNT } from '../config.js';
+import { DEFAULT_DEVELOPER_COUNT } from '../config.js';
 import { createLogger } from '../utils/logger.js';
 
 const log = createLogger('worker-mgr');
 
 const workers: Worker[] = [];
 
-export function startAllWorkers(implementerCount = DEFAULT_IMPLEMENTER_COUNT): void {
+export function startAllWorkers(developerCount = DEFAULT_DEVELOPER_COUNT): void {
   // Start singleton workers
   workers.push(startResearchWorker());
   workers.push(startPlanningWorker());
@@ -22,12 +22,12 @@ export function startAllWorkers(implementerCount = DEFAULT_IMPLEMENTER_COUNT): v
   workers.push(startReviewWorker());
   workers.push(startPrWorker());
 
-  // Start implementation workers — one per implementer
-  for (let i = 1; i <= implementerCount; i++) {
-    workers.push(startImplementationWorker(`implementer-${i}`));
+  // Start implementation workers — one per developer
+  for (let i = 1; i <= developerCount; i++) {
+    workers.push(startImplementationWorker(`developer-${i}`));
   }
 
-  log.info(`Started ${workers.length} workers (${implementerCount} implementers)`);
+  log.info(`Started ${workers.length} workers (${developerCount} developers)`);
 }
 
 export async function stopAllWorkers(): Promise<void> {

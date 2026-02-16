@@ -3,8 +3,7 @@
 import { Router } from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
-import { SPRINTS_DIR } from '../config.js';
-import { getSprint } from '../services/state-service.js';
+import { getSprint, getSprintDir } from '../services/state-service.js';
 
 export const taskRoutes = Router();
 
@@ -15,7 +14,7 @@ taskRoutes.get('/:sprintId', (req, res) => {
 
   if (!sprint) {
     // Try to read from disk
-    const planFile = path.join(SPRINTS_DIR, sprintId, 'plan.json');
+    const planFile = path.join(getSprintDir(sprintId), 'plan.json');
     if (fs.existsSync(planFile)) {
       const plan = JSON.parse(fs.readFileSync(planFile, 'utf-8'));
       res.json(plan.tasks);
@@ -85,10 +84,36 @@ taskRoutes.post('/:sprintId/:taskId/retry', async (req, res) => {
   res.json({ sprintId, taskId, status: 'queued', message: 'Task re-enqueued for retry.' });
 });
 
+// Skip a stuck/in-progress task — mark completed and trigger wave check
+taskRoutes.post('/:sprintId/:taskId/skip', async (req, res) => {
+  const { sprintId, taskId: taskIdStr } = req.params;
+  const taskId = Number(taskIdStr);
+  const sprint = getSprint(sprintId);
+
+  if (!sprint) {
+    res.status(404).json({ error: `Sprint not found: ${sprintId}` });
+    return;
+  }
+
+  const task = sprint.tasks.get(taskId);
+  if (!task) {
+    res.status(404).json({ error: `Task not found: ${taskId}` });
+    return;
+  }
+
+  const { setTaskStatus } = await import('../services/state-service.js');
+  setTaskStatus(sprintId, taskId, 'completed', task.developerId);
+
+  const { broadcast } = await import('../websocket/ws-server.js');
+  broadcast({ type: 'task:status', sprintId, taskId, status: 'completed', developerId: task.developerId });
+
+  res.json({ sprintId, taskId, status: 'completed', message: 'Task skipped and marked completed.' });
+});
+
 // Get task log file content
 taskRoutes.get('/:sprintId/:taskId/log', (req, res) => {
   const { sprintId, taskId } = req.params;
-  const logDir = path.join(SPRINTS_DIR, sprintId, 'logs');
+  const logDir = path.join(getSprintDir(sprintId), 'logs');
 
   if (!fs.existsSync(logDir)) {
     res.status(404).json({ error: 'No logs found' });

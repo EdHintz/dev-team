@@ -3,14 +3,16 @@
 import { Router } from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
-import { SPRINTS_DIR, SPECS_DIR, generateSprintId } from '../config.js';
+import { SPECS_DIR, generateSprintId } from '../config.js';
 import {
   initSprint,
   listSprints,
   getSprint,
   getSprintDetail,
   setSprintStatus,
+  getSprintDir,
 } from '../services/state-service.js';
+import { getAppSprintsDir, getAppSpecsDir } from '../services/app-service.js';
 import { broadcast } from '../websocket/ws-server.js';
 import type { CreateSprintRequest } from '../../shared/types.js';
 
@@ -18,8 +20,13 @@ export const sprintRoutes = Router();
 
 // List all sprints
 sprintRoutes.get('/', (_req, res) => {
-  const sprints = listSprints();
-  res.json(sprints);
+  try {
+    const sprints = listSprints();
+    res.json(sprints);
+  } catch (err) {
+    console.error('Failed to list sprints:', err);
+    res.status(500).json({ error: 'Failed to list sprints' });
+  }
 });
 
 // Get sprint detail
@@ -35,30 +42,35 @@ sprintRoutes.get('/:id', (req, res) => {
 
 // Create a new sprint
 sprintRoutes.post('/', (req, res) => {
-  const { specPath, targetDir, implementerCount, sprintId: requestedId } = req.body as CreateSprintRequest;
+  const { specPath, targetDir, developerCount, sprintId: requestedId, autonomyMode } = req.body as CreateSprintRequest;
 
-  // Validate spec file exists
-  const resolvedSpec = path.isAbsolute(specPath) ? specPath : path.join(SPECS_DIR, specPath);
+  // Validate spec file exists — check app-local specs first, then global
+  let resolvedSpec: string;
+  if (path.isAbsolute(specPath)) {
+    resolvedSpec = specPath;
+  } else {
+    const appSpecPath = path.join(getAppSpecsDir(targetDir), specPath);
+    resolvedSpec = fs.existsSync(appSpecPath) ? appSpecPath : path.join(SPECS_DIR, specPath);
+  }
   if (!fs.existsSync(resolvedSpec)) {
     res.status(400).json({ error: `Spec file not found: ${resolvedSpec}` });
     return;
   }
 
-  // Validate target directory exists
+  // Create target directory if it doesn't exist
   if (!fs.existsSync(targetDir)) {
-    res.status(400).json({ error: `Target directory not found: ${targetDir}` });
-    return;
+    fs.mkdirSync(targetDir, { recursive: true });
   }
 
   const sprintId = requestedId || generateSprintId();
 
-  // Copy spec to sprint directory
-  const sprintDir = path.join(SPRINTS_DIR, sprintId);
+  // Place sprint directory under the app's rootFolder
+  const sprintDir = path.join(getAppSprintsDir(targetDir), sprintId);
   fs.mkdirSync(path.join(sprintDir, 'logs'), { recursive: true });
   fs.copyFileSync(resolvedSpec, path.join(sprintDir, 'spec.md'));
 
   // Initialize sprint state
-  const sprint = initSprint(sprintId, resolvedSpec, targetDir, implementerCount);
+  const sprint = initSprint(sprintId, resolvedSpec, targetDir, developerCount, sprintDir, autonomyMode);
 
   broadcast({ type: 'sprint:status', sprintId, status: sprint.status });
 
@@ -85,7 +97,7 @@ sprintRoutes.post('/:id/start', async (req, res) => {
 
   // Import the queue manager dynamically to avoid circular deps
   const { enqueuePlanningPipeline } = await import('../queues/queue-manager.js');
-  await enqueuePlanningPipeline(id, sprint.specPath, sprint.targetDir, sprint.implementers.length);
+  await enqueuePlanningPipeline(id, sprint.specPath, sprint.targetDir, sprint.developers.length);
 
   setSprintStatus(id, 'researching');
   broadcast({ type: 'sprint:status', sprintId: id, status: 'researching' });
@@ -111,25 +123,24 @@ sprintRoutes.post('/:id/approve', async (req, res) => {
   broadcast({ type: 'sprint:status', sprintId: id, status: 'approved' });
 
   // Resolve the pending approval if one exists
-  const { resolvePendingApproval, setWorktreePath } = await import('../services/state-service.js');
+  const { resolvePendingApproval } = await import('../services/state-service.js');
   resolvePendingApproval(id, `${id}:plan-approval`, true);
 
-  // Set up git branch and worktrees
-  const { setupSprintGit } = await import('../services/git-service.js');
-  const implementerIds = sprint.implementers.map((impl) => impl.id);
-  const worktreePaths = await setupSprintGit(sprint.targetDir, id, implementerIds);
-  for (const [implId, wtPath] of worktreePaths) {
-    setWorktreePath(id, implId, wtPath);
+  try {
+    const { startImplementation } = await import('../services/sprint-lifecycle.js');
+    await startImplementation(id);
+    res.json({ id, status: 'running', message: 'Implementation started.' });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unknown error during approval';
+    console.error(`Sprint ${id} approval failed:`, message);
+
+    // Revert to awaiting-approval so user can retry
+    setSprintStatus(id, 'awaiting-approval');
+    broadcast({ type: 'sprint:status', sprintId: id, status: 'awaiting-approval' });
+    broadcast({ type: 'error', sprintId: id, message: `Approval failed: ${message}` });
+
+    res.status(500).json({ error: `Failed to start implementation: ${message}` });
   }
-
-  // Enqueue implementation tasks
-  const { enqueueImplementation } = await import('../queues/queue-manager.js');
-  await enqueueImplementation(id);
-
-  setSprintStatus(id, 'running');
-  broadcast({ type: 'sprint:status', sprintId: id, status: 'running' });
-
-  res.json({ id, status: 'running', message: 'Implementation started.' });
 });
 
 // Restart a failed/cancelled sprint
@@ -157,11 +168,17 @@ sprintRoutes.post('/:id/restart', async (req, res) => {
 
   // If in reviewing state, re-trigger the review/fix flow
   if (sprint.status === 'reviewing') {
-    const sprintDir = path.join(SPRINTS_DIR, id);
+    const sprintDir = getSprintDir(id);
     // Find the latest review file to determine cycle
-    const reviewFiles = fs.readdirSync(sprintDir).filter((f) => f.match(/^review-\d+\.md$/)).sort();
+    const reviewFiles = fs.readdirSync(sprintDir)
+      .filter((f) => /^review-\d+\.md$/.test(f))
+      .sort((a, b) => {
+        const numA = parseInt(a.match(/review-(\d+)/)?.[1] || '0', 10);
+        const numB = parseInt(b.match(/review-(\d+)/)?.[1] || '0', 10);
+        return numA - numB;
+      });
     const lastCycle = reviewFiles.length > 0
-      ? parseInt(reviewFiles[reviewFiles.length - 1].match(/review-(\d+)\.md/)![1], 10)
+      ? parseInt(reviewFiles[reviewFiles.length - 1].match(/review-(\d+)/)?.[1] || '0', 10)
       : 0;
 
     if (lastCycle > 0) {
@@ -180,7 +197,7 @@ sprintRoutes.post('/:id/restart', async (req, res) => {
   }
 
   // Determine where the sprint failed and resume from there
-  const sprintDir = path.join(SPRINTS_DIR, id);
+  const sprintDir = getSprintDir(id);
   const hasResearch = fs.existsSync(path.join(sprintDir, 'research.md'));
   const hasPlan = sprint.plan !== null;
 
@@ -197,14 +214,14 @@ sprintRoutes.post('/:id/restart', async (req, res) => {
     if (!hasResearch) {
       // No research yet — restart from the beginning
       const { enqueuePlanningPipeline } = await import('../queues/queue-manager.js');
-      await enqueuePlanningPipeline(id, resolvedSpec, resolvedTargetDir, sprint.implementers.length, true);
+      await enqueuePlanningPipeline(id, resolvedSpec, resolvedTargetDir, sprint.developers.length, true);
       setSprintStatus(id, 'researching');
       broadcast({ type: 'sprint:status', sprintId: id, status: 'researching' });
       res.json({ id, status: 'researching', message: 'Sprint restarted from research phase.' });
     } else {
       // Research exists — skip to planning
       const { enqueuePlanning } = await import('../queues/queue-manager.js');
-      await enqueuePlanning(id, resolvedSpec, resolvedTargetDir, sprint.implementers.length, true);
+      await enqueuePlanning(id, resolvedSpec, resolvedTargetDir, sprint.developers.length, true);
       setSprintStatus(id, 'planning');
       broadcast({ type: 'sprint:status', sprintId: id, status: 'planning' });
       res.json({ id, status: 'planning', message: 'Sprint restarted from planning phase (research already complete).' });
@@ -218,8 +235,8 @@ sprintRoutes.post('/:id/restart', async (req, res) => {
 
   // Ensure git branch and worktrees are set up
   const { setupSprintGit } = await import('../services/git-service.js');
-  const implementerIds = sprint.implementers.map((impl) => impl.id);
-  const worktreePaths = await setupSprintGit(sprint.targetDir, id, implementerIds);
+  const developers = sprint.developers.map((dev) => ({ id: dev.id, name: dev.name }));
+  const worktreePaths = await setupSprintGit(sprint.targetDir, id, developers);
   for (const [implId, wtPath] of worktreePaths) {
     setWorktreePath(id, implId, wtPath);
   }
@@ -289,6 +306,81 @@ sprintRoutes.post('/:id/resume', async (req, res) => {
   res.json({ id, status: 'running', message: `Sprint resumed with ${pendingTaskIds.length} tasks re-enqueued.` });
 });
 
+// Force-advance a sprint to reviewing (skip remaining implementation)
+sprintRoutes.post('/:id/advance', async (req, res) => {
+  const { id } = req.params;
+  const sprint = getSprint(id);
+  if (!sprint) {
+    res.status(404).json({ error: `Sprint not found: ${id}` });
+    return;
+  }
+
+  // Clean up worktrees
+  try {
+    const { finalizeImplementation } = await import('../services/git-service.js');
+    const developers = sprint.developers.map((dev) => ({ id: dev.id, name: dev.name }));
+    await finalizeImplementation(sprint.targetDir, id, developers);
+  } catch (err) {
+    // Worktrees may already be cleaned up
+  }
+
+  setSprintStatus(id, 'reviewing');
+  broadcast({ type: 'sprint:status', sprintId: id, status: 'reviewing' });
+
+  const { enqueueTesting } = await import('../queues/queue-manager.js');
+  await enqueueTesting(id);
+
+  res.json({ id, status: 'reviewing', message: 'Sprint advanced to review phase.' });
+});
+
+// Mark a sprint as completed (e.g. after PR is merged on GitHub)
+sprintRoutes.post('/:id/complete', (_req, res) => {
+  const { id } = _req.params;
+  const sprint = getSprint(id);
+  if (!sprint) {
+    res.status(404).json({ error: `Sprint not found: ${id}` });
+    return;
+  }
+
+  if (sprint.status !== 'pr-created') {
+    res.status(400).json({ error: `Sprint is in status '${sprint.status}', expected 'pr-created'` });
+    return;
+  }
+
+  setSprintStatus(id, 'completed');
+  broadcast({ type: 'sprint:status', sprintId: id, status: 'completed' });
+
+  res.json({ id, status: 'completed' });
+});
+
+// Merge sprint branch into local main and mark complete
+sprintRoutes.post('/:id/merge-local', async (req, res) => {
+  const { id } = req.params;
+  const sprint = getSprint(id);
+  if (!sprint) {
+    res.status(404).json({ error: `Sprint not found: ${id}` });
+    return;
+  }
+
+  if (sprint.status !== 'pr-created') {
+    res.status(400).json({ error: `Sprint is in status '${sprint.status}', expected 'pr-created'` });
+    return;
+  }
+
+  try {
+    const { mergeSprintToMain } = await import('../services/git-service.js');
+    await mergeSprintToMain(sprint.targetDir, id);
+
+    setSprintStatus(id, 'completed');
+    broadcast({ type: 'sprint:status', sprintId: id, status: 'completed' });
+
+    res.json({ id, status: 'completed', message: 'Sprint branch merged into local main.' });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Merge failed';
+    res.status(500).json({ error: `Local merge failed: ${message}` });
+  }
+});
+
 // Cancel a sprint
 sprintRoutes.post('/:id/cancel', (_req, res) => {
   const { id } = _req.params;
@@ -304,10 +396,20 @@ sprintRoutes.post('/:id/cancel', (_req, res) => {
   res.json({ id, status: 'cancelled' });
 });
 
-// Get sprint logs
+// Get sprint spec file
+sprintRoutes.get('/:id/spec', (req, res) => {
+  const { id } = req.params;
+  const specFile = path.join(getSprintDir(id), 'spec.md');
+  if (!fs.existsSync(specFile)) {
+    res.status(404).json({ error: 'Spec not found' });
+    return;
+  }
+  res.type('text/markdown').send(fs.readFileSync(specFile, 'utf-8'));
+});
+
 sprintRoutes.get('/:id/logs', (req, res) => {
   const { id } = req.params;
-  const logDir = path.join(SPRINTS_DIR, id, 'logs');
+  const logDir = path.join(getSprintDir(id), 'logs');
   if (!fs.existsSync(logDir)) {
     res.json([]);
     return;

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { useSprintDetail } from '../hooks/use-sprint.js';
+import { useSprintDetail, completeSprint, mergeSprintLocal } from '../hooks/use-sprint.js';
 import { useWebSocket } from '../hooks/use-websocket.js';
 import { SprintStatusBadge } from '../components/StatusBadge.js';
 import { LogViewer } from '../components/LogViewer.js';
@@ -15,6 +15,7 @@ export function ReviewPage() {
   const [logLines, setLogLines] = useState<string[]>([]);
   const [reviewStatus, setReviewStatus] = useState<string>('');
   const [cycle, setCycle] = useState(1);
+  const [actionInProgress, setActionInProgress] = useState(false);
 
   useEffect(() => {
     return subscribe((event: ServerEvent) => {
@@ -23,20 +24,46 @@ export function ReviewPage() {
       switch (event.type) {
         case 'sprint:status':
           refresh();
-          if (event.status === 'pr-created') {
-            // Stay on review page to show the PR link
-          }
           break;
         case 'review:update':
           setCycle(event.cycle);
           setReviewStatus(String(event.status));
           break;
         case 'task:log':
-          setLogLines((prev) => [...prev.slice(-500), event.line]);
+          setLogLines((prev) => {
+            if (prev.length > 0 && prev[prev.length - 1] === event.line) return prev;
+            return [...prev.slice(-500), event.line];
+          });
           break;
       }
     });
   }, [id, subscribe, refresh]);
+
+  const handleComplete = async () => {
+    if (!id) return;
+    setActionInProgress(true);
+    try {
+      await completeSprint(id);
+      refresh();
+    } catch (err) {
+      console.error('Complete failed:', err);
+    } finally {
+      setActionInProgress(false);
+    }
+  };
+
+  const handleMergeLocal = async () => {
+    if (!id) return;
+    setActionInProgress(true);
+    try {
+      await mergeSprintLocal(id);
+      refresh();
+    } catch (err) {
+      console.error('Local merge failed:', err);
+    } finally {
+      setActionInProgress(false);
+    }
+  };
 
   if (loading) return <div className="text-gray-500">Loading...</div>;
   if (!sprint) return <div className="text-red-400">Sprint not found</div>;
@@ -72,9 +99,45 @@ export function ReviewPage() {
               </div>
             )}
 
-            {sprint.status === 'pr-created' && (
+            {sprint.status === 'pr-created' && sprint.prUrl && (
+              <div className="bg-green-900/30 border border-green-800 rounded p-3 text-green-300 text-sm space-y-2">
+                <div>PR created successfully.</div>
+                <a
+                  href={sprint.prUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-blue-400 hover:text-blue-300 underline break-all"
+                >
+                  {sprint.prUrl}
+                </a>
+                <div className="pt-2">
+                  <button
+                    onClick={handleComplete}
+                    disabled={actionInProgress}
+                    className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-500 text-sm disabled:opacity-50"
+                  >
+                    {actionInProgress ? 'Completing...' : 'Mark Complete (PR Merged)'}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {sprint.status === 'pr-created' && !sprint.prUrl && (
+              <div className="bg-blue-900/30 border border-blue-800 rounded p-3 text-blue-300 text-sm space-y-2">
+                <div>No remote repository. Sprint branch is ready to merge locally.</div>
+                <button
+                  onClick={handleMergeLocal}
+                  disabled={actionInProgress}
+                  className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-500 text-sm disabled:opacity-50"
+                >
+                  {actionInProgress ? 'Merging...' : 'Merge to Main & Complete'}
+                </button>
+              </div>
+            )}
+
+            {sprint.status === 'completed' && (
               <div className="bg-green-900/30 border border-green-800 rounded p-3 text-green-300 text-sm">
-                PR created successfully. Check your GitHub repository.
+                Sprint completed.
               </div>
             )}
 

@@ -1,28 +1,31 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { useSprintDetail, pauseSprint, resumeSprint, restartSprint, retryTask } from '../hooks/use-sprint.js';
 import { useWebSocket } from '../hooks/use-websocket.js';
 import { SprintStatusBadge } from '../components/StatusBadge.js';
 import { TaskList } from '../components/TaskList.js';
-import { ImplementerPanel } from '../components/ImplementerPanel.js';
+import { DeveloperPanel } from '../components/DeveloperPanel.js';
 import { LogViewer } from '../components/LogViewer.js';
-import { CostTracker } from '../components/CostTracker.js';
+
 import { ApprovalDialog } from '../components/ApprovalDialog.js';
-import type { ServerEvent, ImplementerIdentity, TaskState } from '@shared/types.js';
+import type { ServerEvent, DeveloperIdentity, TaskState, PlanEstimates, CostData } from '@shared/types.js';
 
 interface PendingApproval {
   id: string;
   message: string;
+  context?: unknown;
 }
 
 export function SprintPage() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const { sprint, loading, refresh } = useSprintDetail(id);
   const { subscribe, send } = useWebSocket();
 
   const [implLogs, setImplLogs] = useState<Record<string, string[]>>({});
   const [testerLogs, setTesterLogs] = useState<string[]>([]);
   const [reviewerLogs, setReviewerLogs] = useState<string[]>([]);
+  const [logsInitialized, setLogsInitialized] = useState(false);
   const [reviewCycle, setReviewCycle] = useState(0);
   const [reviewStatus, setReviewStatus] = useState('');
   const [approval, setApproval] = useState<PendingApproval | null>(null);
@@ -41,15 +44,25 @@ export function SprintPage() {
         break;
 
       case 'task:log':
-        if (event.implementerId === 'tester') {
-          setTesterLogs((prev) => [...prev.slice(-300), event.line]);
-        } else if (event.implementerId === 'reviewer') {
-          setReviewerLogs((prev) => [...prev.slice(-300), event.line]);
+        if (event.developerId === 'tester') {
+          setTesterLogs((prev) => {
+            if (prev.length > 0 && prev[prev.length - 1] === event.line) return prev;
+            return [...prev.slice(-300), event.line];
+          });
+        } else if (event.developerId === 'reviewer') {
+          setReviewerLogs((prev) => {
+            if (prev.length > 0 && prev[prev.length - 1] === event.line) return prev;
+            return [...prev.slice(-300), event.line];
+          });
         } else {
-          setImplLogs((prev) => ({
-            ...prev,
-            [event.implementerId]: [...(prev[event.implementerId] || []).slice(-300), event.line],
-          }));
+          setImplLogs((prev) => {
+            const existing = prev[event.developerId] || [];
+            if (existing.length > 0 && existing[existing.length - 1] === event.line) return prev;
+            return {
+              ...prev,
+              [event.developerId]: [...existing.slice(-300), event.line],
+            };
+          });
         }
         break;
 
@@ -59,7 +72,7 @@ export function SprintPage() {
         break;
 
       case 'approval:required':
-        setApproval({ id: event.id, message: event.message });
+        setApproval({ id: event.id, message: event.message, context: event.context });
         break;
 
       case 'review:update':
@@ -77,6 +90,26 @@ export function SprintPage() {
   useEffect(() => {
     return subscribe(handleEvent);
   }, [subscribe, handleEvent]);
+
+  // Load persisted role logs once when sprint data arrives
+  useEffect(() => {
+    if (!sprint?.roleLogs || logsInitialized) return;
+    const logs = sprint.roleLogs;
+    const newImplLogs: Record<string, string[]> = {};
+    for (const [roleId, lines] of Object.entries(logs)) {
+      if (roleId === 'tester') {
+        setTesterLogs(lines);
+      } else if (roleId === 'reviewer') {
+        setReviewerLogs(lines);
+      } else {
+        newImplLogs[roleId] = lines;
+      }
+    }
+    if (Object.keys(newImplLogs).length > 0) {
+      setImplLogs(newImplLogs);
+    }
+    setLogsInitialized(true);
+  }, [sprint?.roleLogs, logsInitialized]);
 
   const handlePause = async () => {
     if (!id) return;
@@ -130,12 +163,14 @@ export function SprintPage() {
   if (loading) return <div className="text-gray-500">Loading...</div>;
   if (!sprint) return <div className="text-red-400">Sprint not found</div>;
 
-  const implementerColors: Record<string, string> = {};
-  (sprint.implementers || []).forEach((impl: ImplementerIdentity) => {
-    implementerColors[impl.id] = impl.color;
+  const developerColors: Record<string, string> = {};
+  const developerNames: Record<string, string> = {};
+  (sprint.developers || []).forEach((impl: DeveloperIdentity) => {
+    developerColors[impl.id] = impl.color;
+    developerNames[impl.id] = impl.name;
   });
 
-  // Map task states for implementers
+  // Map task states for developers
   const taskStateMap = new Map((sprint.tasks || []).map((t: TaskState) => [t.taskId, t]));
 
   return (
@@ -143,8 +178,9 @@ export function SprintPage() {
       {approval && (
         <ApprovalDialog
           message={approval.message}
-          onApprove={(comment) => {
-            send({ type: 'approval:response', id: approval.id, approved: true, comment });
+          context={approval.context}
+          onApprove={(comment, data) => {
+            send({ type: 'approval:response', id: approval.id, approved: true, comment, data });
             setApproval(null);
           }}
           onReject={(comment) => {
@@ -154,13 +190,28 @@ export function SprintPage() {
         />
       )}
 
-      <div className="flex items-center gap-4 mb-6">
-        <a href="/" className="text-gray-500 hover:text-gray-300 text-sm">&larr; Back</a>
-        <h1 className="text-xl font-bold text-white">{id}</h1>
-        <SprintStatusBadge status={sprint.status} />
-        {sprint.currentWave > 0 && (
-          <span className="text-sm text-gray-500">Wave {sprint.currentWave}</span>
-        )}
+      <div className="mb-6">
+        <div className="flex items-center gap-4 mb-2">
+          <a href="/" className="text-gray-500 hover:text-gray-300 text-sm">&larr; Back</a>
+          <h1 className="text-xl font-bold text-white">{id}</h1>
+          <SprintStatusBadge status={sprint.status} />
+          {sprint.currentWave > 0 && (
+            <span className="text-sm text-gray-500">Wave {sprint.currentWave}</span>
+          )}
+          {(sprint.taskCount ?? 0) > 0 && (
+            <span className="text-sm text-gray-400">
+              {sprint.completedCount ?? 0}/{sprint.taskCount}
+              <span className="text-gray-500 ml-1">
+                ({Math.round(((sprint.completedCount ?? 0) / (sprint.taskCount ?? 1)) * 100)}%)
+              </span>
+            </span>
+          )}
+          {isActiveStatus(sprint.status) && (
+            <span className="flex items-center gap-1.5 text-xs text-green-400">
+              <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+              Working
+            </span>
+          )}
         {(sprint.status === 'running' || sprint.status === 'researching' || sprint.status === 'planning') && (
           <button
             onClick={handlePause}
@@ -179,6 +230,14 @@ export function SprintPage() {
             {actionInProgress ? 'Resuming...' : 'Resume'}
           </button>
         )}
+        {(sprint.status === 'pr-created' || sprint.status === 'reviewing' || sprint.status === 'completed') && (
+          <button
+            onClick={() => navigate(`/sprint/${id}/review`)}
+            className="px-3 py-1 bg-purple-600 text-white rounded text-sm hover:bg-purple-500"
+          >
+            Review & Complete
+          </button>
+        )}
         {(sprint.status === 'failed' || sprint.status === 'cancelled' || sprint.status === 'running' || sprint.status === 'paused' || sprint.status === 'reviewing') && (
           <button
             onClick={handleRestart}
@@ -187,6 +246,23 @@ export function SprintPage() {
           >
             {actionInProgress ? 'Restarting...' : 'Restart'}
           </button>
+        )}
+        </div>
+        {sprint.spec && (
+          <div className="text-sm text-gray-400">
+            <span className="text-gray-500">Spec:</span>{' '}
+            <a
+              href={`/api/sprints/${id}/spec`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-400 hover:text-blue-300 underline"
+            >
+              {sprint.spec}
+            </a>
+          </div>
+        )}
+        {sprint.plan?.estimates && (
+          <EstimateLine estimates={sprint.plan.estimates} costs={sprint.costs} status={sprint.status} createdAt={sprint.createdAt} />
         )}
       </div>
 
@@ -198,21 +274,21 @@ export function SprintPage() {
             <TaskList
               tasks={sprint.plan.tasks}
               taskStates={sprint.tasks || []}
-              implementerColors={implementerColors}
+              developerColors={developerColors}
+              developerNames={developerNames}
               onRetryTask={handleRetryTask}
             />
           )}
-
-          <div className="mt-6">
-            <CostTracker costs={sprint.costs} />
-          </div>
         </div>
 
-        {/* Right: Implementer Panels */}
+        {/* Right: Team Panels */}
         <div className="lg:col-span-2 space-y-4">
-          <h2 className="text-sm font-medium text-gray-500 uppercase tracking-wider mb-3">Implementers</h2>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-medium text-gray-500 uppercase tracking-wider">Team</h2>
+          </div>
 
-          {(sprint.implementers || []).map((impl: ImplementerIdentity) => {
+          <h3 className="text-xs font-medium text-gray-600 uppercase tracking-wider">Developers</h3>
+          {(sprint.developers || []).map((impl: DeveloperIdentity) => {
             const implTasks = (sprint.plan?.tasks || []).filter((t) => t.assigned_to === impl.id);
             const currentTaskState = implTasks
               .map((t) => taskStateMap.get(t.id))
@@ -223,9 +299,9 @@ export function SprintPage() {
             const completedCount = implTasks.filter((t) => taskStateMap.get(t.id)?.status === 'completed').length;
 
             return (
-              <ImplementerPanel
+              <DeveloperPanel
                 key={impl.id}
-                implementer={impl}
+                developer={impl}
                 currentTask={currentTaskState ? { ...currentTaskState, title: currentPlanTask?.title } : undefined}
                 logLines={implLogs[impl.id] || []}
                 completedCount={completedCount}
@@ -237,7 +313,7 @@ export function SprintPage() {
           {/* Testers Section — visible during reviewing/pr-created/completed */}
           {(sprint.status === 'reviewing' || sprint.status === 'pr-created' || sprint.status === 'completed' || testerLogs.length > 0) && (
             <>
-              <h2 className="text-sm font-medium text-gray-500 uppercase tracking-wider mb-3 mt-6">Testers</h2>
+              <h3 className="text-xs font-medium text-gray-600 uppercase tracking-wider mt-6">Testers</h3>
 
               <div className="border border-teal-800 rounded-lg p-4 bg-gray-900">
                 <div className="flex items-center gap-2 mb-3">
@@ -255,7 +331,7 @@ export function SprintPage() {
           {/* Reviewer Panel — visible during review/pr-created/completed */}
           {(sprint.status === 'reviewing' || sprint.status === 'pr-created' || sprint.status === 'completed' || reviewerLogs.length > 0) && (
             <>
-              <h2 className="text-sm font-medium text-gray-500 uppercase tracking-wider mb-3 mt-6">Reviewer</h2>
+              <h3 className="text-xs font-medium text-gray-600 uppercase tracking-wider mt-6">Reviewer</h3>
 
               <div className="border border-purple-800 rounded-lg p-4 bg-gray-900">
                 <div className="flex items-center gap-2 mb-3">
@@ -282,4 +358,101 @@ export function SprintPage() {
       </div>
     </div>
   );
+}
+
+const ACTIVE_STATUSES = new Set(['running', 'researching', 'planning', 'reviewing']);
+function isActiveStatus(status: string): boolean {
+  return ACTIVE_STATUSES.has(status);
+}
+
+function EstimateLine({ estimates, costs, status, createdAt }: { estimates: PlanEstimates; costs: CostData; status: string; createdAt?: string }) {
+  const agentEntries = Object.entries(costs.by_agent);
+
+  const active = isActiveStatus(status);
+
+  // Wall clock elapsed time since sprint creation
+  const [wallSeconds, setWallSeconds] = useState(() => {
+    if (!createdAt) return 0;
+    return Math.max(0, Math.floor((Date.now() - new Date(createdAt).getTime()) / 1000));
+  });
+  useEffect(() => {
+    if (!createdAt) return;
+    const start = new Date(createdAt).getTime();
+    setWallSeconds(Math.max(0, Math.floor((Date.now() - start) / 1000)));
+    if (!active) return;
+    const t = setInterval(() => {
+      setWallSeconds(Math.max(0, Math.floor((Date.now() - start) / 1000)));
+    }, 1000);
+    return () => clearInterval(t);
+  }, [active, createdAt]);
+
+  const actualSeconds = wallSeconds;
+
+  const agentTotal = agentEntries.reduce((sum, [, s]) => sum + s, 0);
+
+  // Agent breakdown dropdown
+  const [showBreakdown, setShowBreakdown] = useState(false);
+
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-y-1 text-sm text-gray-400">
+      <div className="flex flex-wrap items-center gap-x-4">
+        <span>
+          <span className="text-gray-500">Estimate:</span>{' '}
+          <span className="text-blue-300">&#x1F916; {estimates.ai_team}</span>
+        </span>
+        <span className="text-gray-600">|</span>
+        <span>
+          <span className="text-gray-500">&#x1F465;</span>{' '}
+          <span className="text-gray-400">{estimates.human_team}</span>
+        </span>
+      </div>
+      {(actualSeconds > 0 || active) && (
+        <div className="relative flex items-center gap-x-2">
+          <span>
+            <span className="text-gray-500">Actual:</span>{' '}
+            <span className={`text-blue-300${active ? ' tabular-nums' : ''}`}>&#x1F916; {formatDuration(actualSeconds)}</span>
+            {active && <span className="inline-block w-1 ml-0.5 text-blue-400 animate-pulse">:</span>}
+          </span>
+          {agentEntries.length > 0 && (
+            <>
+              <button
+                onClick={() => setShowBreakdown(!showBreakdown)}
+                className="text-xs text-gray-500 hover:text-gray-300 transition"
+              >
+                {showBreakdown ? '\u25B2' : '\u25BC'}
+              </button>
+              {showBreakdown && (
+                <div className="absolute top-full right-0 mt-1 z-10 bg-gray-800 border border-gray-700 rounded-lg p-3 min-w-[180px] shadow-lg">
+                  <div className="space-y-1.5">
+                    {agentEntries.map(([agent, seconds]) => (
+                      <div key={agent} className="flex justify-between text-xs gap-4">
+                        <span className="text-gray-400 capitalize">{agent.replace('implementer', 'developer')}</span>
+                        <span className="text-gray-500 tabular-nums">{formatDuration(seconds)}</span>
+                      </div>
+                    ))}
+                    <div className="border-t border-gray-700 pt-1.5 mt-1.5 flex justify-between text-xs font-medium">
+                      <span className="text-gray-300">Total</span>
+                      <span className="text-gray-300 tabular-nums">{formatDuration(agentTotal)}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function formatDuration(seconds: number): string {
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.round(seconds % 60);
+  if (mins >= 60) {
+    const hrs = Math.floor(mins / 60);
+    const remainMins = mins % 60;
+    return `${hrs}h ${remainMins}m`;
+  }
+  return `${mins}m ${secs}s`;
 }

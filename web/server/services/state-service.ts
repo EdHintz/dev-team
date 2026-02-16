@@ -1,9 +1,9 @@
 // In-memory sprint state management with file-system persistence
-// Reads/writes from sprints/<sprint-id>/ directory
+// Reads/writes from per-app sprint directories via the sprint directory registry
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { SPRINTS_DIR, IMPLEMENTER_POOL, DEFAULT_IMPLEMENTER_COUNT } from '../config.js';
+import { SPRINTS_DIR, DEVELOPER_POOL, DEFAULT_DEVELOPER_COUNT } from '../config.js';
 import { createLogger } from '../utils/logger.js';
 import type {
   SprintStatus,
@@ -13,23 +13,55 @@ import type {
   CostData,
   SprintSummary,
   SprintDetail,
-  ImplementerIdentity,
+  DeveloperIdentity,
+  AutonomyMode,
 } from '../../shared/types.js';
 
 const log = createLogger('state');
+
+// --- Sprint Directory Registry ---
+// Maps sprintId → absolute path to its directory (e.g. /Users/.../macro-econ/sprints/sprint-20260210-839c)
+const sprintDirRegistry = new Map<string, string>();
+
+// App root folders registered at boot (avoids circular import with app-service)
+let appRootFolders: string[] = [];
+
+/**
+ * Look up the directory for a sprint. Falls back to the global SPRINTS_DIR if not registered.
+ */
+export function getSprintDir(sprintId: string): string {
+  return sprintDirRegistry.get(sprintId) || path.join(SPRINTS_DIR, sprintId);
+}
+
+/**
+ * Register a sprint's directory in the registry.
+ */
+export function registerSprintDir(sprintId: string, dir: string): void {
+  sprintDirRegistry.set(sprintId, dir);
+}
+
+/**
+ * Register app root folders so listSprints/loadActiveSprintsFromDisk can scan them.
+ * Called at boot from index.ts to avoid circular imports with app-service.
+ */
+export function registerAppRootFolders(folders: string[]): void {
+  appRootFolders = folders;
+}
 
 export interface SprintState {
   id: string;
   status: SprintStatus;
   plan: Plan | null;
   tasks: Map<number, TaskState>;
-  implementers: ImplementerIdentity[];
+  developers: DeveloperIdentity[];
   currentWave: number;
   worktreePaths: Map<string, string>;
   pendingApprovals: Map<string, PendingApproval>;
   costs: CostData;
   targetDir: string;
   specPath: string;
+  autonomyMode: AutonomyMode;
+  createdAt: string;
 }
 
 export interface PendingApproval {
@@ -37,7 +69,7 @@ export interface PendingApproval {
   sprintId: string;
   message: string;
   context?: unknown;
-  resolve: (approved: boolean, comment?: string) => void;
+  resolve: (approved: boolean, comment?: string, data?: unknown) => void;
 }
 
 // In-memory store of active sprints
@@ -49,93 +81,212 @@ export function initSprint(
   sprintId: string,
   specPath: string,
   targetDir: string,
-  implementerCount = DEFAULT_IMPLEMENTER_COUNT,
+  developerCount = DEFAULT_DEVELOPER_COUNT,
+  sprintDir?: string,
+  autonomyMode: AutonomyMode = 'supervised',
 ): SprintState {
-  const sprintDir = path.join(SPRINTS_DIR, sprintId);
-  fs.mkdirSync(path.join(sprintDir, 'logs'), { recursive: true });
+  const resolvedDir = sprintDir || path.join(SPRINTS_DIR, sprintId);
+  registerSprintDir(sprintId, resolvedDir);
+  fs.mkdirSync(path.join(resolvedDir, 'logs'), { recursive: true });
 
-  const costFile = path.join(sprintDir, 'cost.json');
+  const costFile = path.join(resolvedDir, 'cost.json');
   if (!fs.existsSync(costFile)) {
     fs.writeFileSync(costFile, JSON.stringify({ total: 0, by_agent: {}, by_task: {}, sessions: [] }, null, 2));
   }
 
-  const implementers = IMPLEMENTER_POOL.slice(0, implementerCount).map((impl) => ({ ...impl }));
+  const developers = DEVELOPER_POOL.slice(0, developerCount).map((impl) => ({ ...impl }));
+
+  const createdAt = new Date().toISOString();
 
   const state: SprintState = {
     id: sprintId,
     status: 'created',
     plan: null,
     tasks: new Map(),
-    implementers,
+    developers,
     currentWave: 0,
     worktreePaths: new Map(),
     pendingApprovals: new Map(),
     costs: { total: 0, by_agent: {}, by_task: {}, sessions: [] },
     targetDir,
     specPath,
+    autonomyMode,
+    createdAt,
   };
 
   sprints.set(sprintId, state);
   writeStatus(sprintId, 'created');
-  writeMeta(sprintId, { targetDir, specPath, implementerCount, createdAt: new Date().toISOString() });
+  writeMeta(sprintId, { targetDir, specPath, developerCount, createdAt, autonomyMode });
 
-  log.info(`Initialized sprint: ${sprintId}`, { implementerCount });
+  log.info(`Initialized sprint: ${sprintId}`, { developerCount, autonomyMode });
   return state;
 }
 
 // --- Getters ---
 
 export function getSprint(sprintId: string): SprintState | undefined {
-  return sprints.get(sprintId);
+  return getOrHydrateSprint(sprintId);
 }
 
 export function getSprintOrThrow(sprintId: string): SprintState {
-  const sprint = sprints.get(sprintId);
+  const sprint = getOrHydrateSprint(sprintId);
   if (!sprint) throw new Error(`Sprint not found: ${sprintId}`);
   return sprint;
 }
 
 /**
+ * Get a sprint from memory, or hydrate it from disk if it exists on the filesystem.
+ * This handles the case where the server restarted and lost in-memory state.
+ */
+export function getOrHydrateSprint(sprintId: string): SprintState | undefined {
+  const existing = sprints.get(sprintId);
+  if (existing) return existing;
+
+  // Try to load from disk
+  const sprintDir = getSprintDir(sprintId);
+  if (!fs.existsSync(sprintDir)) return undefined;
+
+  const meta = readMeta(sprintId);
+  if (!meta) return undefined;
+
+  const status = readStatus(sprintId);
+  const plan = readPlan(sprintId);
+  const costs = readCosts(sprintId);
+  const completed = readCompleted(sprintId);
+
+  const developerCount = plan?.developer_count || meta.developerCount || DEFAULT_DEVELOPER_COUNT;
+  const developers = DEVELOPER_POOL.slice(0, developerCount).map((i) => ({ ...i }));
+
+  const tasks = new Map<number, TaskState>();
+  if (plan) {
+    for (const task of plan.tasks) {
+      tasks.set(task.id, {
+        taskId: task.id,
+        status: completed.has(task.id) ? 'completed' : 'pending',
+        developerId: task.assigned_to,
+      });
+    }
+  }
+
+  const state: SprintState = {
+    id: sprintId,
+    status,
+    plan,
+    tasks,
+    developers,
+    currentWave: 0,
+    worktreePaths: new Map(),
+    pendingApprovals: new Map(),
+    costs,
+    targetDir: meta.targetDir,
+    specPath: meta.specPath,
+    autonomyMode: meta.autonomyMode || 'supervised',
+    createdAt: meta.createdAt,
+  };
+
+  sprints.set(sprintId, state);
+  log.info(`Hydrated sprint from disk: ${sprintId}`);
+  return state;
+}
+
+/**
  * List all sprints, combining in-memory state with file-system discovery.
+ * Scans both the global SPRINTS_DIR and each app's {rootFolder}/sprints/ dir.
  */
 export function listSprints(): SprintSummary[] {
   const summaries: SprintSummary[] = [];
+  const seen = new Set<string>();
 
-  if (!fs.existsSync(SPRINTS_DIR)) return summaries;
+  // Collect sprint directories from all locations
+  const sprintScanDirs: string[] = [];
+  if (fs.existsSync(SPRINTS_DIR)) sprintScanDirs.push(SPRINTS_DIR);
+  for (const rootFolder of appRootFolders) {
+    const appSprintsDir = path.join(rootFolder, 'sprints');
+    if (fs.existsSync(appSprintsDir)) sprintScanDirs.push(appSprintsDir);
+  }
 
-  const dirs = fs.readdirSync(SPRINTS_DIR, { withFileTypes: true })
-    .filter((d) => d.isDirectory() && d.name.startsWith('sprint-'));
+  for (const scanDir of sprintScanDirs) {
+    const dirs = fs.readdirSync(scanDir, { withFileTypes: true })
+      .filter((d) => d.isDirectory() && d.name.startsWith('sprint-'));
 
-  for (const dir of dirs) {
-    const sprintId = dir.name;
-    const inMemory = sprints.get(sprintId);
+    for (const dir of dirs) {
+      const sprintId = dir.name;
+      if (seen.has(sprintId)) continue;
+      seen.add(sprintId);
 
-    if (inMemory) {
-      summaries.push(sprintStateToSummary(inMemory));
-    } else {
-      // Load from file system
-      summaries.push(loadSprintSummaryFromDisk(sprintId));
+      // Register the directory if not already known
+      if (!sprintDirRegistry.has(sprintId)) {
+        registerSprintDir(sprintId, path.join(scanDir, sprintId));
+      }
+
+      try {
+        const inMemory = sprints.get(sprintId);
+
+        if (inMemory) {
+          summaries.push(sprintStateToSummary(inMemory));
+        } else {
+          // Load from file system
+          summaries.push(loadSprintSummaryFromDisk(sprintId));
+        }
+      } catch {
+        // Skip broken sprint directories rather than failing the whole list
+        summaries.push({ id: sprintId, status: 'failed' });
+      }
     }
   }
+
+  // Reverse chronological order (sprint IDs encode date as sprint-YYYYMMDD-xxxx)
+  summaries.sort((a, b) => b.id.localeCompare(a.id));
 
   return summaries;
 }
 
 export function getSprintDetail(sprintId: string): SprintDetail {
+  const roleLogs = loadRoleLogs(sprintId);
+  const prUrl = readPrUrl(sprintId);
+
   const state = sprints.get(sprintId);
   if (state) {
     return {
       ...sprintStateToSummary(state),
       plan: state.plan,
       tasks: Array.from(state.tasks.values()),
-      implementers: state.implementers,
+      developers: state.developers,
       currentWave: state.currentWave,
       costs: state.costs,
+      roleLogs,
+      prUrl,
     };
   }
 
   // Fall back to loading from disk for sprints not in memory
-  return loadSprintDetailFromDisk(sprintId);
+  const detail = loadSprintDetailFromDisk(sprintId);
+  detail.roleLogs = roleLogs;
+  detail.prUrl = prUrl;
+  return detail;
+}
+
+/** Load persisted role log files for a sprint. */
+function loadRoleLogs(sprintId: string): Record<string, string[]> {
+  const logDir = path.join(getSprintDir(sprintId), 'role-logs');
+  const result: Record<string, string[]> = {};
+
+  if (!fs.existsSync(logDir)) return result;
+
+  try {
+    const files = fs.readdirSync(logDir).filter((f) => f.endsWith('.log'));
+    for (const file of files) {
+      const roleId = file.replace(/\.log$/, '');
+      const content = fs.readFileSync(path.join(logDir, file), 'utf-8');
+      const lines = content.split('\n').filter((l) => l);
+      // Keep last 500 lines per role to avoid huge payloads
+      result[roleId] = lines.slice(-500);
+    }
+  } catch {
+    // Best-effort
+  }
+
+  return result;
 }
 
 // --- State Mutations ---
@@ -160,12 +311,12 @@ export function setSprintPlan(sprintId: string, plan: Plan): void {
     sprint.tasks.set(task.id, {
       taskId: task.id,
       status: 'pending',
-      implementerId: task.assigned_to,
+      developerId: task.assigned_to,
     });
   }
 
   // Write plan.json to disk
-  const planFile = path.join(SPRINTS_DIR, sprintId, 'plan.json');
+  const planFile = path.join(getSprintDir(sprintId), 'plan.json');
   fs.writeFileSync(planFile, JSON.stringify(plan, null, 2));
 }
 
@@ -177,10 +328,15 @@ function normalizePlan(plan: Plan): void {
   for (let i = 0; i < plan.tasks.length; i++) {
     const task = plan.tasks[i];
 
-    // Normalize task ID: "task-1" → 1, "3" → 3, or use index+1 as fallback
+    // Normalize task ID to integer
     if (typeof task.id === 'string') {
+      const original = task.id;
       const numericPart = (task.id as string).replace(/\D/g, '');
       (task as { id: number }).id = numericPart ? parseInt(numericPart, 10) : i + 1;
+      log.warn(`Planner produced string task ID "${original}", coerced to ${task.id}`);
+    } else if (typeof task.id !== 'number') {
+      (task as { id: number }).id = i + 1;
+      log.warn(`Planner produced non-numeric task ID, defaulted to ${task.id}`);
     }
 
     // Default agent to 'implementer' if it has an assigned_to
@@ -188,10 +344,11 @@ function normalizePlan(plan: Plan): void {
       task.agent = 'implementer';
     }
 
-    // Normalize depends_on IDs the same way
+    // Normalize depends_on IDs to integers
     if (task.depends_on) {
       task.depends_on = task.depends_on.map((dep) => {
         if (typeof dep === 'string') {
+          log.warn(`Planner produced string dependency "${dep}" in task ${task.id}, coercing`);
           const numPart = (dep as unknown as string).replace(/\D/g, '');
           return numPart ? parseInt(numPart, 10) : 0;
         }
@@ -205,15 +362,25 @@ function normalizePlan(plan: Plan): void {
     if (!task.labels) task.labels = [];
     if (!task.acceptance_criteria) task.acceptance_criteria = [];
   }
+
+  // Default missing numeric estimate fields
+  if (plan.estimates) {
+    if (typeof plan.estimates.ai_team_minutes !== 'number') {
+      plan.estimates.ai_team_minutes = 0;
+    }
+    if (typeof plan.estimates.human_team_minutes !== 'number') {
+      plan.estimates.human_team_minutes = 0;
+    }
+  }
 }
 
-export function setTaskStatus(sprintId: string, taskId: number, status: TaskStatus, implementerId?: string): void {
+export function setTaskStatus(sprintId: string, taskId: number, status: TaskStatus, developerId?: string): void {
   const sprint = getSprintOrThrow(sprintId);
   const task = sprint.tasks.get(taskId);
 
   if (task) {
     task.status = status;
-    if (implementerId) task.implementerId = implementerId;
+    if (developerId) task.developerId = developerId;
     if (status === 'in-progress') task.startedAt = new Date().toISOString();
     if (status === 'completed' || status === 'failed') task.completedAt = new Date().toISOString();
   }
@@ -229,14 +396,14 @@ export function setCurrentWave(sprintId: string, wave: number): void {
   sprint.currentWave = wave;
 }
 
-export function setWorktreePath(sprintId: string, implementerId: string, worktreePath: string): void {
+export function setWorktreePath(sprintId: string, developerId: string, worktreePath: string): void {
   const sprint = getSprintOrThrow(sprintId);
-  sprint.worktreePaths.set(implementerId, worktreePath);
+  sprint.worktreePaths.set(developerId, worktreePath);
 }
 
 export function updateCosts(sprintId: string): CostData {
   const sprint = getSprintOrThrow(sprintId);
-  const costFile = path.join(SPRINTS_DIR, sprintId, 'cost.json');
+  const costFile = path.join(getSprintDir(sprintId), 'cost.json');
 
   if (fs.existsSync(costFile)) {
     sprint.costs = JSON.parse(fs.readFileSync(costFile, 'utf-8'));
@@ -252,16 +419,33 @@ export function addPendingApproval(approval: PendingApproval): void {
   sprint.pendingApprovals.set(approval.id, approval);
 }
 
-export function resolvePendingApproval(sprintId: string, approvalId: string, approved: boolean, comment?: string): boolean {
+export function resolvePendingApproval(sprintId: string, approvalId: string, approved: boolean, comment?: string, data?: unknown): boolean {
   const sprint = getSprint(sprintId);
   if (!sprint) return false;
 
   const approval = sprint.pendingApprovals.get(approvalId);
   if (!approval) return false;
 
-  approval.resolve(approved, comment);
+  approval.resolve(approved, comment, data);
   sprint.pendingApprovals.delete(approvalId);
   return true;
+}
+
+// --- Autonomy Mode ---
+
+export function sprintNeedsApproval(sprintId: string, stepType: 'plan' | 'task' | 'commit' | 'pr'): boolean {
+  const sprint = getSprint(sprintId);
+  const mode = sprint?.autonomyMode || 'supervised';
+  switch (mode) {
+    case 'supervised':
+      return true;
+    case 'semi-auto':
+      return stepType === 'commit' || stepType === 'pr';
+    case 'full-auto':
+      return false;
+    default:
+      return true;
+  }
 }
 
 // --- Restart / Retry ---
@@ -302,26 +486,41 @@ export function resetSprintForRestart(sprintId: string): { pendingTaskIds: numbe
 /**
  * Load all sprints with active statuses from disk into memory on server startup.
  * This ensures workers can find sprint state after a server restart.
+ * Scans both the global SPRINTS_DIR and each app's {rootFolder}/sprints/ dir.
  */
 export function loadActiveSprintsFromDisk(): number {
-  if (!fs.existsSync(SPRINTS_DIR)) return 0;
-
   const activeStatuses = new Set(['running', 'researching', 'planning', 'awaiting-approval', 'approved', 'reviewing', 'paused']);
   let loaded = 0;
 
-  const dirs = fs.readdirSync(SPRINTS_DIR, { withFileTypes: true })
-    .filter((d) => d.isDirectory() && d.name.startsWith('sprint-'));
+  // Collect sprint directories from all locations
+  const sprintScanDirs: string[] = [];
+  if (fs.existsSync(SPRINTS_DIR)) sprintScanDirs.push(SPRINTS_DIR);
+  for (const rootFolder of appRootFolders) {
+    const appSprintsDir = path.join(rootFolder, 'sprints');
+    if (fs.existsSync(appSprintsDir)) sprintScanDirs.push(appSprintsDir);
+  }
 
-  for (const dir of dirs) {
-    const sprintId = dir.name;
-    if (sprints.has(sprintId)) continue;
+  for (const scanDir of sprintScanDirs) {
+    const dirs = fs.readdirSync(scanDir, { withFileTypes: true })
+      .filter((d) => d.isDirectory() && d.name.startsWith('sprint-'));
 
-    const status = readStatus(sprintId);
-    if (activeStatuses.has(status)) {
-      const result = loadSprintFromDisk(sprintId);
-      if (result) {
-        loaded++;
-        log.info(`Auto-loaded sprint ${sprintId} (status: ${status})`);
+    for (const dir of dirs) {
+      const sprintId = dir.name;
+      if (sprints.has(sprintId)) continue;
+
+      // Register the directory
+      const sprintDir = path.join(scanDir, sprintId);
+      if (!sprintDirRegistry.has(sprintId)) {
+        registerSprintDir(sprintId, sprintDir);
+      }
+
+      const status = readStatus(sprintId);
+      if (activeStatuses.has(status)) {
+        const result = loadSprintFromDisk(sprintId);
+        if (result) {
+          loaded++;
+          log.info(`Auto-loaded sprint ${sprintId} (status: ${status})`);
+        }
       }
     }
   }
@@ -336,7 +535,7 @@ export function loadActiveSprintsFromDisk(): number {
  * If targetDir is not provided, attempts to read it from .meta.json.
  */
 export function loadSprintFromDisk(sprintId: string, targetDir?: string): SprintState | null {
-  const sprintDir = path.join(SPRINTS_DIR, sprintId);
+  const sprintDir = getSprintDir(sprintId);
   if (!fs.existsSync(sprintDir)) return null;
 
   const status = readStatus(sprintId);
@@ -352,13 +551,14 @@ export function loadSprintFromDisk(sprintId: string, targetDir?: string): Sprint
     status,
     plan,
     tasks: new Map(),
-    implementers: IMPLEMENTER_POOL.slice(0, plan?.implementer_count || meta?.implementerCount || DEFAULT_IMPLEMENTER_COUNT).map((i) => ({ ...i })),
+    developers: DEVELOPER_POOL.slice(0, plan?.developer_count || meta?.developerCount || DEFAULT_DEVELOPER_COUNT).map((i) => ({ ...i })),
     currentWave: 0,
     worktreePaths: new Map(),
     pendingApprovals: new Map(),
     costs,
     targetDir: resolvedTargetDir,
     specPath: plan?.spec || meta?.specPath || '',
+    autonomyMode: meta?.autonomyMode || 'supervised',
   };
 
   if (plan) {
@@ -366,7 +566,7 @@ export function loadSprintFromDisk(sprintId: string, targetDir?: string): Sprint
       state.tasks.set(task.id, {
         taskId: task.id,
         status: completedTasks.has(task.id) ? 'completed' : 'pending',
-        implementerId: task.assigned_to,
+        developerId: task.assigned_to,
       });
     }
   }
@@ -377,19 +577,29 @@ export function loadSprintFromDisk(sprintId: string, targetDir?: string): Sprint
 
 // --- File Helpers ---
 
+function readPrUrl(sprintId: string): string | undefined {
+  const file = path.join(getSprintDir(sprintId), '.pr-url');
+  if (!fs.existsSync(file)) return undefined;
+  try {
+    return fs.readFileSync(file, 'utf-8').trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function writeStatus(sprintId: string, status: string): void {
-  const file = path.join(SPRINTS_DIR, sprintId, '.status');
+  const file = path.join(getSprintDir(sprintId), '.status');
   fs.writeFileSync(file, status);
 }
 
 function readStatus(sprintId: string): SprintStatus {
-  const file = path.join(SPRINTS_DIR, sprintId, '.status');
+  const file = path.join(getSprintDir(sprintId), '.status');
   if (!fs.existsSync(file)) return 'created';
   return fs.readFileSync(file, 'utf-8').trim() as SprintStatus;
 }
 
 function readPlan(sprintId: string): Plan | null {
-  const file = path.join(SPRINTS_DIR, sprintId, 'plan.json');
+  const file = path.join(getSprintDir(sprintId), 'plan.json');
   if (!fs.existsSync(file)) return null;
   try {
     const plan = JSON.parse(fs.readFileSync(file, 'utf-8')) as Plan;
@@ -401,7 +611,7 @@ function readPlan(sprintId: string): Plan | null {
 }
 
 function readCosts(sprintId: string): CostData {
-  const file = path.join(SPRINTS_DIR, sprintId, 'cost.json');
+  const file = path.join(getSprintDir(sprintId), 'cost.json');
   if (!fs.existsSync(file)) return { total: 0, by_agent: {}, by_task: {} };
   try {
     return JSON.parse(fs.readFileSync(file, 'utf-8'));
@@ -411,19 +621,19 @@ function readCosts(sprintId: string): CostData {
 }
 
 function appendCompleted(sprintId: string, taskId: number): void {
-  const file = path.join(SPRINTS_DIR, sprintId, '.completed');
+  const file = path.join(getSprintDir(sprintId), '.completed');
   fs.appendFileSync(file, `${taskId}\n`);
 }
 
 function readCompleted(sprintId: string): Set<number> {
-  const file = path.join(SPRINTS_DIR, sprintId, '.completed');
+  const file = path.join(getSprintDir(sprintId), '.completed');
   if (!fs.existsSync(file)) return new Set();
   const lines = fs.readFileSync(file, 'utf-8').trim().split('\n').filter(Boolean);
   return new Set(lines.map(Number));
 }
 
 function removeFromCompleted(sprintId: string, taskId: number): void {
-  const file = path.join(SPRINTS_DIR, sprintId, '.completed');
+  const file = path.join(getSprintDir(sprintId), '.completed');
   if (!fs.existsSync(file)) return;
   const lines = fs.readFileSync(file, 'utf-8').trim().split('\n').filter(Boolean);
   const filtered = lines.filter((line) => Number(line) !== taskId);
@@ -435,7 +645,7 @@ function removeFromCompleted(sprintId: string, taskId: number): void {
  * Throws if the sprint directory doesn't exist.
  */
 function loadSprintDetailFromDisk(sprintId: string): SprintDetail {
-  const sprintDir = path.join(SPRINTS_DIR, sprintId);
+  const sprintDir = getSprintDir(sprintId);
   if (!fs.existsSync(sprintDir)) {
     throw new Error(`Sprint not found: ${sprintId}`);
   }
@@ -446,8 +656,8 @@ function loadSprintDetailFromDisk(sprintId: string): SprintDetail {
   const completed = readCompleted(sprintId);
   const meta = readMeta(sprintId);
 
-  const implementerCount = plan?.implementer_count || meta?.implementerCount || DEFAULT_IMPLEMENTER_COUNT;
-  const implementers = IMPLEMENTER_POOL.slice(0, implementerCount).map((i) => ({ ...i }));
+  const developerCount = plan?.developer_count || meta?.developerCount || DEFAULT_DEVELOPER_COUNT;
+  const developers = DEVELOPER_POOL.slice(0, developerCount).map((i) => ({ ...i }));
 
   const tasks: TaskState[] = [];
   if (plan) {
@@ -455,7 +665,7 @@ function loadSprintDetailFromDisk(sprintId: string): SprintDetail {
       tasks.push({
         taskId: task.id,
         status: completed.has(task.id) ? 'completed' : 'pending',
-        implementerId: task.assigned_to,
+        developerId: task.assigned_to,
       });
     }
   }
@@ -466,12 +676,13 @@ function loadSprintDetailFromDisk(sprintId: string): SprintDetail {
     spec: plan?.spec || meta?.specPath,
     taskCount: plan?.tasks.length,
     completedCount: completed.size,
-    implementerCount,
+    developerCount,
     plan,
     tasks,
-    implementers,
+    developers,
     currentWave: 0,
     costs,
+    autonomyMode: meta?.autonomyMode,
   };
 }
 
@@ -479,6 +690,7 @@ function loadSprintSummaryFromDisk(sprintId: string): SprintSummary {
   const status = readStatus(sprintId);
   const plan = readPlan(sprintId);
   const completed = readCompleted(sprintId);
+  const meta = readMeta(sprintId);
 
   return {
     id: sprintId,
@@ -486,24 +698,28 @@ function loadSprintSummaryFromDisk(sprintId: string): SprintSummary {
     spec: plan?.spec,
     taskCount: plan?.tasks.length,
     completedCount: completed.size,
-    implementerCount: plan?.implementer_count || DEFAULT_IMPLEMENTER_COUNT,
+    developerCount: plan?.developer_count || DEFAULT_DEVELOPER_COUNT,
+    createdAt: meta?.createdAt,
+    targetDir: meta?.targetDir,
+    autonomyMode: meta?.autonomyMode,
   };
 }
 
 interface SprintMeta {
   targetDir: string;
   specPath: string;
-  implementerCount: number;
+  developerCount: number;
   createdAt: string;
+  autonomyMode?: AutonomyMode;
 }
 
 function writeMeta(sprintId: string, meta: SprintMeta): void {
-  const file = path.join(SPRINTS_DIR, sprintId, '.meta.json');
+  const file = path.join(getSprintDir(sprintId), '.meta.json');
   fs.writeFileSync(file, JSON.stringify(meta, null, 2));
 }
 
 function readMeta(sprintId: string): SprintMeta | null {
-  const file = path.join(SPRINTS_DIR, sprintId, '.meta.json');
+  const file = path.join(getSprintDir(sprintId), '.meta.json');
   if (!fs.existsSync(file)) return null;
   try {
     return JSON.parse(fs.readFileSync(file, 'utf-8'));
@@ -520,6 +736,9 @@ function sprintStateToSummary(state: SprintState): SprintSummary {
     spec: state.plan?.spec,
     taskCount: state.plan?.tasks.length,
     completedCount,
-    implementerCount: state.implementers.length,
+    developerCount: state.developers.length,
+    createdAt: state.createdAt,
+    targetDir: state.targetDir,
+    autonomyMode: state.autonomyMode,
   };
 }

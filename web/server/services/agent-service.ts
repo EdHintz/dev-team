@@ -4,7 +4,8 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { AGENTS_DIR, SPRINTS_DIR, getModelForAgent } from '../config.js';
+import { AGENTS_DIR, getModelForAgent } from '../config.js';
+import { getSprintDir } from './state-service.js';
 import { createLogger } from '../utils/logger.js';
 import type { CostData } from '../../shared/types.js';
 
@@ -43,17 +44,20 @@ export async function runAgent(options: RunAgentOptions): Promise<AgentResult> {
   // Set up logging
   let logFile: string | undefined;
   if (options.sprintId) {
-    const logDir = path.join(SPRINTS_DIR, options.sprintId, 'logs');
+    const logDir = path.join(getSprintDir(options.sprintId), 'logs');
     fs.mkdirSync(logDir, { recursive: true });
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
     logFile = path.join(logDir, `${options.agentName}-${options.taskId || 'general'}-${timestamp}.log`);
   }
 
+  // Read agent system prompt from file so it works regardless of cwd
+  const agentPrompt = fs.readFileSync(agentFile, 'utf-8');
+
   // Build command args
   const args = [
     '--print',
     '--model', model,
-    '--agent', options.agentName,
+    '--system-prompt', agentPrompt,
     '--dangerously-skip-permissions',
   ];
 
@@ -226,7 +230,7 @@ function extractLastJson<T>(text: string): T | null {
 }
 
 function trackCost(sprintId: string, agentName: string, taskId: string, durationSeconds: number): void {
-  const costFile = path.join(SPRINTS_DIR, sprintId, 'cost.json');
+  const costFile = path.join(getSprintDir(sprintId), 'cost.json');
 
   try {
     let costs: CostData;

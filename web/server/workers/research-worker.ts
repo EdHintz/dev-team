@@ -4,9 +4,9 @@ import { Worker, Job } from 'bullmq';
 import fs from 'node:fs';
 import path from 'node:path';
 import { getRedisConnection } from '../utils/redis.js';
-import { SPRINTS_DIR, BUDGETS } from '../config.js';
+import { BUDGETS } from '../config.js';
 import { runAgentJob } from './base-worker.js';
-import { setSprintStatus } from '../services/state-service.js';
+import { setSprintStatus, getSprintDir } from '../services/state-service.js';
 import { enqueuePlanning } from '../queues/queue-manager.js';
 import { broadcast } from '../websocket/ws-server.js';
 import { createLogger } from '../utils/logger.js';
@@ -37,7 +37,7 @@ ${spec}
 
 Target project directory: ${targetDir}
 
-Analyze the codebase at the target directory and produce a research.md file in the sprint directory at: ${path.join(SPRINTS_DIR, sprintId, 'research.md')}
+Analyze the codebase at the target directory and produce a research.md file in the sprint directory at: ${path.join(getSprintDir(sprintId), 'research.md')}
 
 Focus on:
 1. Project structure and directory layout
@@ -52,7 +52,7 @@ Focus on:
     });
 
     // Verify research.md was created
-    const researchFile = path.join(SPRINTS_DIR, sprintId, 'research.md');
+    const researchFile = path.join(getSprintDir(sprintId), 'research.md');
     if (!fs.existsSync(researchFile)) {
       // Write the agent output as research.md if it didn't create the file itself
       fs.writeFileSync(researchFile, result.output);

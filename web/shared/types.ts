@@ -40,17 +40,25 @@ export interface Task {
   wave?: number;
 }
 
+export interface PlanEstimates {
+  ai_team: string;
+  human_team: string;
+  ai_team_minutes: number;
+  human_team_minutes: number;
+}
+
 export interface Plan {
   sprint_id: string;
   spec: string;
-  implementer_count?: number;
+  developer_count?: number;
   tasks: Task[];
+  estimates?: PlanEstimates;
 }
 
 export interface TaskState {
   taskId: number;
   status: TaskStatus;
-  implementerId?: string;
+  developerId?: string;
   startedAt?: string;
   completedAt?: string;
   error?: string;
@@ -75,21 +83,38 @@ export interface SprintSummary {
   spec?: string;
   taskCount?: number;
   completedCount?: number;
-  implementerCount?: number;
+  developerCount?: number;
   createdAt?: string;
+  targetDir?: string;
+  autonomyMode?: AutonomyMode;
+}
+
+// --- Apps ---
+
+export interface App {
+  id: string;
+  name: string;
+  rootFolder: string;
+  createdAt: string;
+}
+
+export interface AppWithSprints extends App {
+  sprints: SprintSummary[];
 }
 
 export interface SprintDetail extends SprintSummary {
   plan: Plan | null;
   tasks: TaskState[];
-  implementers: ImplementerIdentity[];
+  developers: DeveloperIdentity[];
   currentWave: number;
   costs: CostData;
+  roleLogs?: Record<string, string[]>;
+  prUrl?: string;
 }
 
-// --- Implementer ---
+// --- Developer ---
 
-export interface ImplementerIdentity {
+export interface DeveloperIdentity {
   id: string;
   name: string;
   avatar: string;
@@ -100,20 +125,20 @@ export interface ImplementerIdentity {
 
 export type ServerEvent =
   | { type: 'sprint:status'; sprintId: string; status: SprintStatus }
-  | { type: 'task:status'; sprintId: string; taskId: number; status: TaskStatus; implementerId?: string }
-  | { type: 'task:log'; sprintId: string; taskId: number; implementerId: string; line: string }
+  | { type: 'task:status'; sprintId: string; taskId: number; status: TaskStatus; developerId?: string }
+  | { type: 'task:log'; sprintId: string; taskId: number; developerId: string; line: string }
   | { type: 'wave:started'; sprintId: string; wave: number; taskIds: number[] }
   | { type: 'wave:completed'; sprintId: string; wave: number }
-  | { type: 'merge:started'; sprintId: string; implementerId: string }
-  | { type: 'merge:completed'; sprintId: string; implementerId: string; success: boolean; conflicts?: string[] }
+  | { type: 'merge:started'; sprintId: string; developerId: string }
+  | { type: 'merge:completed'; sprintId: string; developerId: string; success: boolean; conflicts?: string[] }
   | { type: 'approval:required'; id: string; sprintId: string; message: string; context?: unknown }
   | { type: 'review:update'; sprintId: string; cycle: number; status: string; findings?: unknown }
   | { type: 'cost:update'; sprintId: string; costs: CostData }
   | { type: 'error'; sprintId: string; message: string; details?: unknown };
 
 export type ClientEvent =
-  | { type: 'approval:response'; id: string; approved: boolean; comment?: string }
-  | { type: 'sprint:start'; specPath: string; targetDir: string; implementerCount?: number }
+  | { type: 'approval:response'; id: string; approved: boolean; comment?: string; data?: unknown }
+  | { type: 'sprint:start'; specPath: string; targetDir: string; developerCount?: number }
   | { type: 'sprint:approve'; sprintId: string }
   | { type: 'sprint:cancel'; sprintId: string }
   | { type: 'task:retry'; sprintId: string; taskId: number };
@@ -123,8 +148,9 @@ export type ClientEvent =
 export interface CreateSprintRequest {
   specPath: string;
   targetDir: string;
-  implementerCount?: number;
+  developerCount?: number;
   sprintId?: string;
+  autonomyMode?: AutonomyMode;
 }
 
 export interface ApproveSprintRequest {

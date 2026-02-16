@@ -5,7 +5,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import fs from 'node:fs';
 import path from 'node:path';
-import { SPRINTS_DIR } from '../config.js';
+import { getSprintDir } from './state-service.js';
 import { createLogger } from '../utils/logger.js';
 import type { Plan, Task } from '../../shared/types.js';
 
@@ -123,7 +123,7 @@ export async function addIssueComment(issueNumber: string, comment: string, cwd?
 // --- Sprint Tasks ---
 
 export function getSprintTasksOrdered(sprintId: string): Task[] {
-  const planFile = path.join(SPRINTS_DIR, sprintId, 'plan.json');
+  const planFile = path.join(getSprintDir(sprintId), 'plan.json');
 
   if (!fs.existsSync(planFile)) {
     throw new Error(`No plan.json found for sprint ${sprintId}`);

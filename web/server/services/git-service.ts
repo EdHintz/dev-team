@@ -1,4 +1,4 @@
-// Git operations with worktree support for multiple implementers
+// Git operations with worktree support for multiple developers
 
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -27,6 +27,22 @@ async function git(args: string[], cwd: string, quiet = false): Promise<string> 
   }
 }
 
+// --- Repo Initialization ---
+
+/**
+ * If the target directory is not a git repository, initialize it.
+ */
+export async function initRepoIfNeeded(targetDir: string): Promise<void> {
+  try {
+    await git(['rev-parse', '--git-dir'], targetDir, true);
+  } catch {
+    log.info(`Initializing git repo in ${targetDir}`);
+    await git(['init'], targetDir);
+    // Create an initial commit so branches can be created
+    await git(['commit', '--allow-empty', '-m', 'Initial commit'], targetDir);
+  }
+}
+
 // --- Branch Management ---
 
 export async function getCurrentBranch(cwd: string): Promise<string> {
@@ -47,24 +63,36 @@ export async function checkoutBranch(cwd: string, branch: string): Promise<void>
 // --- Worktree Management ---
 
 /**
- * Create a git worktree for an implementer on a sub-branch of the sprint branch.
+ * Create a git worktree for an developer on a sub-branch of the sprint branch.
  * Returns the path to the worktree.
  */
 export async function createWorktree(
   targetDir: string,
   sprintId: string,
-  implementerId: string,
+  developerId: string,
+  friendlyName?: string,
 ): Promise<string> {
-  const worktreePath = path.resolve(targetDir, '..', `${path.basename(targetDir)}-worktree-${implementerId}`);
-  const branchName = `sprint/${sprintId}/${implementerId}`;
+  const suffix = friendlyName ? friendlyName.toLowerCase() : developerId;
+  const worktreePath = path.resolve(targetDir, '..', `${path.basename(targetDir)}-worktree-${suffix}`);
+  const branchName = `sprint/${sprintId}--${suffix}`;
 
   // Clean up if worktree already exists
   if (fs.existsSync(worktreePath)) {
     await removeWorktree(targetDir, worktreePath);
   }
 
+  // Prune stale worktree references, then delete existing branch (from a previous run)
+  try {
+    await git(['worktree', 'prune'], targetDir, true);
+  } catch { /* ignore */ }
+  try {
+    await git(['branch', '-D', branchName], targetDir, true);
+  } catch {
+    // Branch may not exist — that's fine
+  }
+
   await git(['worktree', 'add', worktreePath, '-b', branchName], targetDir);
-  log.info(`Created worktree for ${implementerId}`, { worktreePath, branchName });
+  log.info(`Created worktree for ${developerId}`, { worktreePath, branchName });
 
   return worktreePath;
 }
@@ -88,14 +116,16 @@ export async function removeWorktree(targetDir: string, worktreePath: string): P
 export async function cleanupWorktrees(
   targetDir: string,
   sprintId: string,
-  implementerIds: string[],
+  developerIds: string[],
+  nameMap?: Map<string, string>,
 ): Promise<void> {
-  for (const implId of implementerIds) {
-    const worktreePath = path.resolve(targetDir, '..', `${path.basename(targetDir)}-worktree-${implId}`);
+  for (const devId of developerIds) {
+    const suffix = nameMap?.get(devId)?.toLowerCase() || devId;
+    const worktreePath = path.resolve(targetDir, '..', `${path.basename(targetDir)}-worktree-${suffix}`);
     await removeWorktree(targetDir, worktreePath);
 
-    // Delete the implementer sub-branch
-    const branchName = `sprint/${sprintId}/${implId}`;
+    // Delete the developer sub-branch
+    const branchName = `sprint/${sprintId}--${suffix}`;
     try {
       await git(['branch', '-D', branchName], targetDir);
     } catch {
@@ -114,29 +144,31 @@ export async function cleanupWorktrees(
 // --- Merge ---
 
 /**
- * Merge an implementer's branch back into the sprint branch.
+ * Merge an developer's branch back into the sprint branch.
  */
-export async function mergeImplementerBranch(
+export async function mergeDeveloperBranch(
   targetDir: string,
   sprintId: string,
-  implementerId: string,
+  developerId: string,
+  friendlyName?: string,
 ): Promise<MergeResult> {
   const sprintBranch = `sprint/${sprintId}`;
-  const implBranch = `sprint/${sprintId}/${implementerId}`;
+  const suffix = friendlyName ? friendlyName.toLowerCase() : developerId;
+  const devBranch = `sprint/${sprintId}--${suffix}`;
 
   // Ensure we're on the sprint branch
   await git(['checkout', sprintBranch], targetDir);
 
   try {
-    await git(['merge', implBranch, '--no-edit'], targetDir);
-    log.info(`Merged ${implBranch} into ${sprintBranch}`);
+    await git(['merge', devBranch, '--no-edit'], targetDir);
+    log.info(`Merged ${devBranch} into ${sprintBranch}`);
     return { success: true };
   } catch (err) {
     // Check for merge conflicts
     const message = err instanceof Error ? err.message : '';
     if (message.includes('CONFLICT') || message.includes('Automatic merge failed')) {
       const conflicts = await getConflictFiles(targetDir);
-      log.warn(`Merge conflicts detected`, { implBranch, conflicts });
+      log.warn(`Merge conflicts detected`, { devBranch, conflicts });
 
       // Abort the merge for now — let the orchestrator decide what to do
       await git(['merge', '--abort'], targetDir);
@@ -160,24 +192,21 @@ async function getConflictFiles(cwd: string): Promise<string[]> {
  * Used before starting a new wave.
  */
 export async function resetWorktreeToSprint(
-  targetDir: string,
+  _targetDir: string,
   worktreePath: string,
   sprintId: string,
-  implementerId: string,
+  developerId: string,
+  friendlyName?: string,
 ): Promise<void> {
   const sprintBranch = `sprint/${sprintId}`;
-  const implBranch = `sprint/${sprintId}/${implementerId}`;
+  const suffix = friendlyName ? friendlyName.toLowerCase() : developerId;
+  const devBranch = `sprint/${sprintId}--${suffix}`;
 
-  // Delete and recreate the implementer branch from the current sprint branch
-  try {
-    await git(['checkout', sprintBranch], worktreePath);
-    await git(['branch', '-D', implBranch], targetDir);
-  } catch {
-    // Branch may not exist
-  }
-
-  await git(['checkout', '-b', implBranch], worktreePath);
-  log.info(`Reset worktree to sprint head`, { worktreePath, implBranch });
+  // Reset the worktree (on the developer branch) to match the sprint branch head.
+  // This moves the developer branch pointer + working tree to the sprint branch commit.
+  // No checkout needed — the worktree stays on its developer branch.
+  await git(['reset', '--hard', sprintBranch], worktreePath);
+  log.info(`Reset worktree to sprint head`, { worktreePath, devBranch });
 }
 
 // --- Commit ---
@@ -206,11 +235,48 @@ export async function stageAll(cwd: string): Promise<void> {
   await git(['add', '-A'], cwd);
 }
 
+// --- Remote ---
+
+export async function hasRemote(cwd: string, remote = 'origin'): Promise<boolean> {
+  try {
+    await git(['remote', 'get-url', remote], cwd, true);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // --- Push ---
 
 export async function pushBranch(cwd: string, branch: string): Promise<void> {
   await git(['push', '-u', 'origin', branch], cwd);
   log.info(`Pushed branch: ${branch}`);
+}
+
+// --- Local Merge ---
+
+export async function mergeSprintToMain(cwd: string, sprintId: string): Promise<void> {
+  const sprintBranch = `sprint/${sprintId}`;
+
+  // Stash any uncommitted changes (sprint status/cost files) before switching branches
+  const status = await git(['status', '--porcelain'], cwd);
+  const needsStash = status.trim().length > 0;
+  if (needsStash) {
+    await git(['stash', 'push', '-m', `pre-merge-${sprintId}`], cwd);
+  }
+
+  try {
+    await git(['checkout', 'main'], cwd);
+    await git(['merge', sprintBranch, '--no-edit'], cwd);
+    log.info(`Merged ${sprintBranch} into main`);
+  } finally {
+    // Restore stashed changes
+    if (needsStash) {
+      await git(['stash', 'pop'], cwd).catch(() => {
+        log.warn('Failed to pop stash after merge — may need manual resolution');
+      });
+    }
+  }
 }
 
 // --- Diff ---
@@ -227,13 +293,13 @@ export async function getDiff(cwd: string, base?: string): Promise<string> {
 /**
  * Set up git state for a new sprint:
  * 1. Create sprint branch from current HEAD (should be on main)
- * 2. Create a worktree for each implementer
- * Returns map of implementerId → worktreePath
+ * 2. Create a worktree for each developer
+ * Returns map of developerId → worktreePath
  */
 export async function setupSprintGit(
   targetDir: string,
   sprintId: string,
-  implementerIds: string[],
+  developers: { id: string; name: string }[],
 ): Promise<Map<string, string>> {
   // Create the sprint branch
   const sprintBranch = `sprint/${sprintId}`;
@@ -246,24 +312,24 @@ export async function setupSprintGit(
     log.info(`Checked out existing sprint branch: ${sprintBranch}`);
   }
 
-  // Create worktrees for each implementer
+  // Create worktrees for each developer
   const worktreePaths = new Map<string, string>();
-  for (const implId of implementerIds) {
-    const wtPath = await createWorktree(targetDir, sprintId, implId);
-    worktreePaths.set(implId, wtPath);
+  for (const dev of developers) {
+    const wtPath = await createWorktree(targetDir, sprintId, dev.id, dev.name);
+    worktreePaths.set(dev.id, wtPath);
   }
 
   return worktreePaths;
 }
 
 /**
- * After a wave completes, merge each implementer's branch back to the sprint branch,
+ * After a wave completes, merge each developer's branch back to the sprint branch,
  * then reset worktrees for the next wave.
  */
 export async function mergeWaveAndReset(
   targetDir: string,
   sprintId: string,
-  implementerIds: string[],
+  developers: { id: string; name: string }[],
 ): Promise<MergeResult[]> {
   const results: MergeResult[] = [];
 
@@ -271,20 +337,21 @@ export async function mergeWaveAndReset(
   const sprintBranch = `sprint/${sprintId}`;
   await git(['checkout', sprintBranch], targetDir);
 
-  // Merge each implementer's branch
-  for (const implId of implementerIds) {
-    const result = await mergeImplementerBranch(targetDir, sprintId, implId);
+  // Merge each developer's branch
+  for (const dev of developers) {
+    const result = await mergeDeveloperBranch(targetDir, sprintId, dev.id, dev.name);
     results.push(result);
     if (!result.success) {
-      log.warn(`Merge conflict from ${implId}`, { conflicts: result.conflicts });
+      log.warn(`Merge conflict from ${dev.name}`, { conflicts: result.conflicts });
     }
   }
 
   // Reset worktrees for the next wave
-  for (const implId of implementerIds) {
-    const worktreePath = path.resolve(targetDir, '..', `${path.basename(targetDir)}-worktree-${implId}`);
+  for (const dev of developers) {
+    const suffix = dev.name.toLowerCase();
+    const worktreePath = path.resolve(targetDir, '..', `${path.basename(targetDir)}-worktree-${suffix}`);
     if (fs.existsSync(worktreePath)) {
-      await resetWorktreeToSprint(targetDir, worktreePath, sprintId, implId);
+      await resetWorktreeToSprint(targetDir, worktreePath, sprintId, dev.id, dev.name);
     }
   }
 
@@ -298,13 +365,15 @@ export async function mergeWaveAndReset(
 export async function finalizeImplementation(
   targetDir: string,
   sprintId: string,
-  implementerIds: string[],
+  developers: { id: string; name: string }[],
 ): Promise<void> {
   // Final merge
-  await mergeWaveAndReset(targetDir, sprintId, implementerIds);
+  await mergeWaveAndReset(targetDir, sprintId, developers);
 
   // Clean up worktrees
-  await cleanupWorktrees(targetDir, sprintId, implementerIds);
+  const developerIds = developers.map((i) => i.id);
+  const nameMap = new Map(developers.map((i) => [i.id, i.name]));
+  await cleanupWorktrees(targetDir, sprintId, developerIds, nameMap);
 
   // Stay on sprint branch for testing/review
   const sprintBranch = `sprint/${sprintId}`;

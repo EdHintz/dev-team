@@ -4,7 +4,8 @@ import { Worker, Job } from 'bullmq';
 import fs from 'node:fs';
 import path from 'node:path';
 import { getRedisConnection } from '../utils/redis.js';
-import { SPRINTS_DIR, BUDGETS } from '../config.js';
+import { BUDGETS } from '../config.js';
+import { getSprintDir } from '../services/state-service.js';
 import { runAgentJob } from './base-worker.js';
 import { broadcast } from '../websocket/ws-server.js';
 import { createLogger } from '../utils/logger.js';
@@ -23,27 +24,32 @@ export function startTestingWorker(): Worker {
     const { sprintId, targetDir } = job.data;
     log.info(`Starting testing for ${sprintId}`);
 
-    const researchFile = path.join(SPRINTS_DIR, sprintId, 'research.md');
+    const researchFile = path.join(getSprintDir(sprintId), 'research.md');
     const research = fs.existsSync(researchFile) ? fs.readFileSync(researchFile, 'utf-8') : '';
-    const planFile = path.join(SPRINTS_DIR, sprintId, 'plan.json');
+    const planFile = path.join(getSprintDir(sprintId), 'plan.json');
     const planContent = fs.existsSync(planFile) ? fs.readFileSync(planFile, 'utf-8') : '';
 
-    const prompt = `You are the tester agent for sprint ${sprintId}.
+    const prompt = `You are the integration tester for sprint ${sprintId}.
+
+Multiple developers worked on this sprint in parallel — their code has been merged. Your job is to verify everything works together.
+
+Sprint Plan (shows which tasks were assigned to which developers):
+${planContent}
 
 Codebase Research:
 ${research}
 
-Sprint Plan:
-${planContent}
-
 Working directory: ${targetDir}
 
 Instructions:
-1. Review the implemented code
-2. Write tests following existing patterns (co-located test files)
-3. Run the full test suite with npm test
-4. Stage your test files with git add (but do NOT commit)
-5. Report test results`;
+1. Run the existing test suite first: npm test. Report any failures — these likely indicate merge incompatibilities between developers' work.
+2. Read the plan to identify tasks from different developers that touch related areas (shared modules, APIs one produces and another consumes, shared types).
+3. Write a small number of targeted integration tests (3-8) covering those cross-task boundaries. Do NOT write unit tests — developers already handle those.
+4. Run the full test suite again: npm test
+5. Stage your test files with git add (but do NOT commit)
+6. Print a summary of which integration points you tested and the results
+
+If there was only one developer, just run the existing test suite and report results — skip writing new tests unless you see untested cross-module interactions.`;
 
     const result = await runAgentJob(job, 'tester', prompt, {
       budget: String(BUDGETS.test),

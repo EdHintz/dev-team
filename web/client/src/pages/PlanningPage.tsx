@@ -5,7 +5,7 @@ import { useWebSocket } from '../hooks/use-websocket.js';
 import { SprintStatusBadge } from '../components/StatusBadge.js';
 import { TaskList } from '../components/TaskList.js';
 import { LogViewer } from '../components/LogViewer.js';
-import type { ServerEvent, ImplementerIdentity } from '@shared/types.js';
+import type { ServerEvent, DeveloperIdentity } from '@shared/types.js';
 
 export function PlanningPage() {
   const { id } = useParams<{ id: string }>();
@@ -22,24 +22,34 @@ export function PlanningPage() {
       switch (event.type) {
         case 'sprint:status':
           refresh();
-          if (event.status === 'running') {
+          if (event.status === 'running' || event.status === 'approved') {
             navigate(`/sprint/${id}`);
           }
           break;
         case 'task:log':
-          setLogLines((prev) => [...prev.slice(-500), event.line]);
+          setLogLines((prev) => {
+            if (prev.length > 0 && prev[prev.length - 1] === event.line) return prev;
+            return [...prev.slice(-500), event.line];
+          });
           break;
       }
     });
   }, [id, subscribe, refresh, navigate]);
 
+  const [approveError, setApproveError] = useState<string | null>(null);
+
   const handleApprove = async () => {
     if (!id) return;
     setApproving(true);
+    setApproveError(null);
     try {
       await approveSprint(id);
+      // Navigate immediately — don't wait for WebSocket
+      navigate(`/sprint/${id}`);
     } catch (err) {
-      console.error('Approval failed:', err);
+      const msg = err instanceof Error ? err.message : 'Approval failed';
+      console.error('Approval failed:', msg);
+      setApproveError(msg);
     } finally {
       setApproving(false);
     }
@@ -53,9 +63,11 @@ export function PlanningPage() {
     return <div className="text-red-400">Sprint not found</div>;
   }
 
-  const implementerColors: Record<string, string> = {};
-  (sprint.implementers || []).forEach((impl: ImplementerIdentity) => {
-    implementerColors[impl.id] = impl.color;
+  const developerColors: Record<string, string> = {};
+  const developerNames: Record<string, string> = {};
+  (sprint.developers || []).forEach((impl: DeveloperIdentity) => {
+    developerColors[impl.id] = impl.color;
+    developerNames[impl.id] = impl.name;
   });
 
   const isWaiting = sprint.status === 'researching' || sprint.status === 'planning';
@@ -86,18 +98,45 @@ export function PlanningPage() {
           <div className="mb-6">
             <h2 className="text-lg font-medium text-white mb-2">Sprint Plan</h2>
             <div className="text-sm text-gray-400 mb-4">
-              {sprint.plan.tasks.length} tasks across {sprint.implementers?.length || 1} implementer(s)
+              {sprint.plan.tasks.length} tasks across {sprint.developers?.length || 1} developer(s)
             </div>
 
-            {sprint.implementers && sprint.implementers.length > 1 && (
+            {sprint.plan.estimates && (() => {
+              const est = sprint.plan.estimates;
+              return (
+                <div className="flex gap-6 mb-4 p-3 bg-gray-800 rounded-lg border border-gray-700">
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg" role="img" aria-label="AI team">&#x1F916;</span>
+                    <div>
+                      <div className="text-xs text-gray-500">AI Dev Team</div>
+                      <div className="text-sm font-medium text-blue-300">
+                        {est.ai_team}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="border-l border-gray-700" />
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg" role="img" aria-label="Human team">&#x1F465;</span>
+                    <div>
+                      <div className="text-xs text-gray-500">Human Team ({sprint.developers?.length || 1} dev{(sprint.developers?.length || 1) > 1 ? 's' : ''})</div>
+                      <div className="text-sm font-medium text-gray-300">{est.human_team}</div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {sprint.developers && sprint.developers.length > 1 && (
               <div className="flex gap-4 mb-4">
-                {sprint.implementers.map((impl: ImplementerIdentity) => {
+                {sprint.developers.map((impl: DeveloperIdentity) => {
                   const taskCount = sprint.plan!.tasks.filter((t) => t.assigned_to === impl.id).length;
                   return (
                     <div key={impl.id} className="flex items-center gap-2 text-sm">
-                      <div
-                        className="w-3 h-3 rounded-full"
-                        style={{ backgroundColor: impl.color }}
+                      <img
+                        src={impl.avatar}
+                        alt={impl.name}
+                        className="w-6 h-6 rounded-full"
+                        style={{ backgroundColor: impl.color + '15' }}
                       />
                       <span className="text-gray-300">{impl.name}</span>
                       <span className="text-gray-600">({taskCount} tasks)</span>
@@ -110,9 +149,16 @@ export function PlanningPage() {
             <TaskList
               tasks={sprint.plan.tasks}
               taskStates={sprint.tasks || []}
-              implementerColors={implementerColors}
+              developerColors={developerColors}
+              developerNames={developerNames}
             />
           </div>
+
+          {approveError && (
+            <div className="text-red-400 text-sm mb-3 p-3 bg-red-900/20 border border-red-800 rounded">
+              {approveError}
+            </div>
+          )}
 
           <div className="flex gap-3 border-t border-gray-800 pt-4">
             <button

@@ -34,7 +34,7 @@ export function SprintStatusBadge({ status }: { status: SprintStatus }) {
 
 export function TaskStatusBadge({ status }: { status: TaskStatus }) {
   return (
-    <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${TASK_COLORS[status] || 'bg-gray-700 text-gray-300'}`}>
+    <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium shrink-0 ${TASK_COLORS[status] || 'bg-gray-700 text-gray-300'}`}>
       {status}
     </span>
   );

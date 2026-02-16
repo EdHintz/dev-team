@@ -1,5 +1,26 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
-  <circle cx="32" cy="32" r="30" fill="#F59E0B" opacity="0.2"/>
-  <circle cx="32" cy="32" r="30" stroke="#F59E0B" stroke-width="2"/>
-  <text x="32" y="40" text-anchor="middle" font-family="monospace" font-size="24" font-weight="bold" fill="#F59E0B">B</text>
+  <!-- Bolt: Energetic, fast robot — lightning bolt antenna, angled eyes, dynamic pose -->
+  <!-- Lightning bolt antenna -->
+  <polygon points="32,2 29,9 33,9 30,16 37,8 33,8 36,2" fill="#fbbf24"/>
+  <!-- Head — angular -->
+  <rect x="18" y="14" width="28" height="16" rx="3" fill="#f59e0b"/>
+  <!-- Eyes — sharp, angled -->
+  <polygon points="22,19 29,17 29,23 22,21" fill="#fef3c7"/>
+  <polygon points="42,19 35,17 35,23 42,21" fill="#fef3c7"/>
+  <circle cx="25" cy="20" r="1.5" fill="#78350f"/>
+  <circle cx="39" cy="20" r="1.5" fill="#78350f"/>
+  <!-- Mouth — grin -->
+  <path d="M25 26 L28 28 L32 26 L36 28 L39 26" stroke="#78350f" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Body — compact, energetic -->
+  <rect x="16" y="32" width="32" height="18" rx="4" fill="#d97706"/>
+  <!-- Chest bolt emblem -->
+  <polygon points="32,34 29,40 33,40 30,46 37,39 33,39 36,34" fill="#fbbf24"/>
+  <!-- Arms — angled outward for dynamic feel -->
+  <rect x="6" y="30" width="7" height="15" rx="3.5" fill="#f59e0b" transform="rotate(-10 9 37)"/>
+  <rect x="51" y="30" width="7" height="15" rx="3.5" fill="#f59e0b" transform="rotate(10 55 37)"/>
+  <!-- Legs — springs -->
+  <rect x="21" y="50" width="7" height="6" rx="2" fill="#d97706"/>
+  <rect x="36" y="50" width="7" height="6" rx="2" fill="#d97706"/>
+  <rect x="20" y="56" width="9" height="4" rx="2" fill="#b45309"/>
+  <rect x="35" y="56" width="9" height="4" rx="2" fill="#b45309"/>
 </svg>

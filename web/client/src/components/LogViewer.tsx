@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useCallback } from 'react';
 
 interface LogViewerProps {
   lines: string[];
@@ -6,14 +6,26 @@ interface LogViewerProps {
 }
 
 export function LogViewer({ lines, maxHeight = '300px' }: LogViewerProps) {
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const isNearBottomRef = useRef(true);
+
+  const handleScroll = useCallback(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    // Consider "near bottom" if within 40px of the bottom
+    isNearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+  }, []);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const el = containerRef.current;
+    if (!el || !isNearBottomRef.current) return;
+    el.scrollTop = el.scrollHeight;
   }, [lines.length]);
 
   return (
     <div
+      ref={containerRef}
+      onScroll={handleScroll}
       className="bg-gray-950 border border-gray-800 rounded p-3 overflow-y-auto font-mono text-xs text-gray-400"
       style={{ maxHeight }}
     >
@@ -25,7 +37,6 @@ export function LogViewer({ lines, maxHeight = '300px' }: LogViewerProps) {
           {line}
         </div>
       ))}
-      <div ref={bottomRef} />
     </div>
   );
 }

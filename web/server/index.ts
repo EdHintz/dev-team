@@ -8,13 +8,17 @@ import { checkRedisConnection, closeRedisConnection } from './utils/redis.js';
 import { initWebSocket, closeWebSocket } from './websocket/ws-server.js';
 import { initQueues } from './queues/queue-manager.js';
 import { startAllWorkers, stopAllWorkers } from './workers/worker-manager.js';
-import { loadActiveSprintsFromDisk } from './services/state-service.js';
+import { loadActiveSprintsFromDisk, registerAppRootFolders } from './services/state-service.js';
+import { getAllAppRootFolders } from './services/app-service.js';
 import { createLogger } from './utils/logger.js';
 
 const log = createLogger('server');
 
 async function main(): Promise<void> {
   log.info('Starting Dev Team Web Orchestrator...');
+
+  // Register app root folders so sprint scanning can find per-app sprint dirs
+  registerAppRootFolders(getAllAppRootFolders());
 
   // Load any active sprints from disk into memory
   const loadedCount = loadActiveSprintsFromDisk();

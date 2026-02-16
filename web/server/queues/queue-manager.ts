@@ -33,10 +33,10 @@ export function initQueues(): void {
   reviewQueue = new Queue('review', { connection });
   prQueue = new Queue('pr-creation', { connection });
 
-  // Create per-implementer queues (default 5 slots, created on demand)
+  // Create per-developer queues (default 5 slots, created on demand)
   for (let i = 1; i <= 5; i++) {
-    const queueName = `implementation-implementer-${i}`;
-    implementationQueues.set(`implementer-${i}`, new Queue(queueName, { connection }));
+    const queueName = `implementation-developer-${i}`;
+    implementationQueues.set(`developer-${i}`, new Queue(queueName, { connection }));
   }
 
   // Set up event listeners for progress forwarding
@@ -51,7 +51,7 @@ export function initQueues(): void {
           type: 'task:log',
           sprintId: progressData.sprintId,
           taskId: 0,
-          implementerId: 'researcher',
+          developerId: 'researcher',
           line: progressData.line || '',
         });
       }
@@ -66,7 +66,7 @@ export function initQueues(): void {
           type: 'task:log',
           sprintId: progressData.sprintId,
           taskId: 0,
-          implementerId: 'planner',
+          developerId: 'planner',
           line: progressData.line || '',
         });
       }
@@ -84,7 +84,7 @@ export function initQueues(): void {
           type: 'task:log',
           sprintId: progressData.sprintId,
           taskId: 0,
-          implementerId: 'tester',
+          developerId: 'tester',
           line: progressData.line || '',
         });
       }
@@ -99,7 +99,7 @@ export function initQueues(): void {
           type: 'task:log',
           sprintId: progressData.sprintId,
           taskId: 0,
-          implementerId: 'reviewer',
+          developerId: 'reviewer',
           line: progressData.line || '',
         });
       }
@@ -117,7 +117,7 @@ export function initQueues(): void {
             type: 'task:log',
             sprintId: progressData.sprintId,
             taskId: progressData.taskId || 0,
-            implementerId: implId,
+            developerId: implId,
             line: progressData.line || '',
           });
         }
@@ -134,7 +134,7 @@ export async function enqueuePlanningPipeline(
   sprintId: string,
   specPath: string,
   targetDir: string,
-  _implementerCount: number,
+  _developerCount: number,
   retry = false,
 ): Promise<void> {
   const suffix = retry ? `-retry-${Date.now()}` : '';
@@ -154,7 +154,7 @@ export async function enqueuePlanning(
   sprintId: string,
   specPath: string,
   targetDir: string,
-  implementerCount: number,
+  developerCount: number,
   retry = false,
 ): Promise<void> {
   const suffix = retry ? `-retry-${Date.now()}` : '';
@@ -162,7 +162,7 @@ export async function enqueuePlanning(
     sprintId,
     specPath,
     targetDir,
-    implementerCount,
+    developerCount,
   }, {
     jobId: `planning-${sprintId}${suffix}`,
   });
@@ -191,7 +191,7 @@ export async function enqueueImplementation(sprintId: string): Promise<void> {
   // Enqueue wave 1 tasks — subsequent waves are enqueued after wave completion
   const wave1 = waves.get(1) || tasks.filter((t) => (t.depends_on || []).length === 0);
   for (const task of wave1) {
-    const implId = task.assigned_to || 'implementer-1';
+    const implId = task.assigned_to || 'developer-1';
     const queue = implementationQueues.get(implId);
     if (!queue) continue;
 
@@ -199,7 +199,7 @@ export async function enqueueImplementation(sprintId: string): Promise<void> {
       sprintId,
       taskId: task.id,
       taskDetails: task,
-      implementerId: implId,
+      developerId: implId,
       targetDir: sprint.targetDir,
     }, {
       jobId: `impl-${sprintId}-${task.id}`,
@@ -218,7 +218,7 @@ export async function enqueueNextWave(sprintId: string, wave: number): Promise<n
   );
 
   for (const task of tasks) {
-    const implId = task.assigned_to || 'implementer-1';
+    const implId = task.assigned_to || 'developer-1';
     const queue = implementationQueues.get(implId);
     if (!queue) continue;
 
@@ -226,7 +226,7 @@ export async function enqueueNextWave(sprintId: string, wave: number): Promise<n
       sprintId,
       taskId: task.id,
       taskDetails: task,
-      implementerId: implId,
+      developerId: implId,
       targetDir: sprint.targetDir,
     }, {
       jobId: `impl-${sprintId}-${task.id}`,
@@ -281,8 +281,8 @@ export async function enqueuePrCreation(sprintId: string): Promise<void> {
 export async function enqueueFixCycle(sprintId: string, cycle: number, reviewFindings: string): Promise<void> {
   const sprint = getSprintOrThrow(sprintId);
 
-  // Send fix job to implementer-1 (primary fixer)
-  const fixerId = 'implementer-1';
+  // Send fix job to developer-1 (primary fixer)
+  const fixerId = 'developer-1';
   const queue = implementationQueues.get(fixerId);
   if (!queue) throw new Error(`No queue found for ${fixerId}`);
 
@@ -295,7 +295,7 @@ export async function enqueueFixCycle(sprintId: string, cycle: number, reviewFin
       description: reviewFindings,
       depends_on: [],
     },
-    implementerId: fixerId,
+    developerId: fixerId,
     targetDir: sprint.targetDir,
     fixCycle: cycle,
     reviewFindings,
@@ -313,8 +313,8 @@ export function getPlanningQueue(): Queue { return planningQueue; }
 export function getTestingQueue(): Queue { return testingQueue; }
 export function getReviewQueue(): Queue { return reviewQueue; }
 export function getPrQueue(): Queue { return prQueue; }
-export function getImplementationQueue(implementerId: string): Queue | undefined {
-  return implementationQueues.get(implementerId);
+export function getImplementationQueue(developerId: string): Queue | undefined {
+  return implementationQueues.get(developerId);
 }
 
 // --- Restart / Retry ---
@@ -326,7 +326,7 @@ export async function reEnqueueTask(sprintId: string, taskId: number): Promise<v
   const task = sprint.plan.tasks.find((t) => t.id === taskId);
   if (!task) throw new Error(`Task ${taskId} not found in plan`);
 
-  const implId = task.assigned_to || 'implementer-1';
+  const implId = task.assigned_to || 'developer-1';
   const queue = implementationQueues.get(implId);
   if (!queue) throw new Error(`No queue found for ${implId}`);
 
@@ -334,7 +334,7 @@ export async function reEnqueueTask(sprintId: string, taskId: number): Promise<v
     sprintId,
     taskId: task.id,
     taskDetails: task,
-    implementerId: implId,
+    developerId: implId,
     targetDir: sprint.targetDir,
   }, {
     jobId: `impl-${sprintId}-${task.id}-retry-${Date.now()}`,

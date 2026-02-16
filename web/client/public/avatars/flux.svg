@@ -1,5 +1,37 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
-  <circle cx="32" cy="32" r="30" fill="#EF4444" opacity="0.2"/>
-  <circle cx="32" cy="32" r="30" stroke="#EF4444" stroke-width="2"/>
-  <text x="32" y="40" text-anchor="middle" font-family="monospace" font-size="24" font-weight="bold" fill="#EF4444">F</text>
+  <!-- Flux: Dynamic, fiery robot — spiked antenna, intense eyes, angular design -->
+  <!-- Triple spike antenna -->
+  <line x1="27" y1="4" x2="29" y2="13" stroke="#f87171" stroke-width="2" stroke-linecap="round"/>
+  <line x1="32" y1="2" x2="32" y2="13" stroke="#ef4444" stroke-width="2.5" stroke-linecap="round"/>
+  <line x1="37" y1="4" x2="35" y2="13" stroke="#f87171" stroke-width="2" stroke-linecap="round"/>
+  <circle cx="32" cy="2" r="2" fill="#fca5a5"/>
+  <!-- Head — angular, aggressive -->
+  <path d="M16 28 L18 13 L46 13 L48 28 Z" fill="#ef4444"/>
+  <!-- Eyes — intense, angular -->
+  <polygon points="22,18 29,17 29,23 22,22" fill="#fee2e2"/>
+  <polygon points="42,18 35,17 35,23 42,22" fill="#fee2e2"/>
+  <circle cx="26" cy="20" r="1.5" fill="#7f1d1d"/>
+  <circle cx="38" cy="20" r="1.5" fill="#7f1d1d"/>
+  <!-- Eye glow -->
+  <circle cx="26" cy="20" r="3" fill="#ef4444" opacity="0.2"/>
+  <circle cx="38" cy="20" r="3" fill="#ef4444" opacity="0.2"/>
+  <!-- Mouth — angular teeth -->
+  <rect x="25" y="24" width="14" height="3" rx="0.5" fill="#7f1d1d"/>
+  <rect x="27" y="24" width="2" height="3" fill="#fee2e2"/>
+  <rect x="31" y="24" width="2" height="3" fill="#fee2e2"/>
+  <rect x="35" y="24" width="2" height="3" fill="#fee2e2"/>
+  <!-- Body — angular, powerful -->
+  <path d="M13 50 L17 30 L47 30 L51 50 Z" fill="#dc2626"/>
+  <!-- Chest core — glowing circle -->
+  <circle cx="32" cy="39" r="5" fill="#ef4444"/>
+  <circle cx="32" cy="39" r="3" fill="#fca5a5"/>
+  <circle cx="32" cy="39" r="1.5" fill="#fff"/>
+  <!-- Arms — angular -->
+  <rect x="5" y="32" width="7" height="14" rx="2" fill="#ef4444" transform="rotate(-8 8 39)"/>
+  <rect x="52" y="32" width="7" height="14" rx="2" fill="#ef4444" transform="rotate(8 56 39)"/>
+  <!-- Legs -->
+  <rect x="21" y="50" width="8" height="9" rx="2" fill="#dc2626"/>
+  <rect x="35" y="50" width="8" height="9" rx="2" fill="#dc2626"/>
+  <rect x="20" y="57" width="10" height="4" rx="2" fill="#b91c1c"/>
+  <rect x="34" y="57" width="10" height="4" rx="2" fill="#b91c1c"/>
 </svg>

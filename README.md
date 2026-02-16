@@ -2,21 +2,21 @@
 
 An agentic development team powered by Claude Code. Give it a feature spec, get back a PR.
 
-Specialized AI agents coordinate through a web-based orchestrator to research, plan, implement, test, and review code changes. Multiple implementers work in parallel using git worktrees, with real-time progress visible in a browser UI.
+Specialized AI agents coordinate through a web-based orchestrator to research, plan, implement, test, and review code changes. Multiple developers work in parallel using git worktrees, with real-time progress visible in a browser UI.
 
 ## How It Works
 
 ```
-Spec → Researcher → Planner → [Approve] → Implementers (parallel) → Tester → Reviewer → PR
+Spec → Researcher → Planner → [Approve] → Developers (parallel) → Tester → Reviewer → PR
 ```
 
 1. **You write a spec** describing a feature (see `specs/_template.md`)
 2. **Researcher** analyzes your codebase for patterns, conventions, and context
-3. **Planner** breaks the spec into ordered tasks with dependencies, assigns them to implementers in waves
+3. **Planner** breaks the spec into ordered tasks with dependencies, assigns them to developers in waves
 4. **You approve** the plan in the web UI
-5. **Multiple Implementers** (default 2) work in parallel on their assigned tasks using git worktrees
+5. **Multiple Developers** (default 2) work in parallel on their assigned tasks using git worktrees
 6. **Tester** writes and runs tests against the completed implementation
-7. **Reviewer** reviews the full diff — if MUST-FIX issues are found, an implementer fixes them and the reviewer runs again (up to 3 cycles)
+7. **Reviewer** reviews the full diff — if MUST-FIX issues are found, a developer fixes them and the reviewer runs again (up to 3 cycles)
 8. **A PR is created** on the sprint branch against main
 
 ## Prerequisites
@@ -51,6 +51,11 @@ npm install
 
 # 2. Start Redis (if not already running)
 redis-cli ping || redis-server --daemonize yes
+To start redis now and restart at login:
+  brew services start redis
+Or, if you don't want/need a background service you can just run:
+  /opt/homebrew/opt/redis/bin/redis-server /opt/homebrew/etc/redis.conf
+
 
 # 3. Start the backend server (port 4000)
 npm run dev
@@ -73,10 +78,10 @@ npm run dev:all
 1. Open `http://localhost:4001` in your browser
 2. Click **New Sprint** on the dashboard
 3. Enter the path to your spec file and target project directory
-4. Choose the number of implementers (default: 2)
+4. Choose the number of developers (default: 2)
 5. Watch research and planning progress in real time
 6. **Approve** the generated plan
-7. Watch implementers work in parallel with live log streaming
+7. Watch developers work in parallel with live log streaming
 8. Review the tester and reviewer output
 9. PR is created automatically on approval
 
@@ -98,14 +103,14 @@ npm run dev:all
 | Agent | Model | Role |
 |-------|-------|------|
 | Researcher | Haiku | Explores codebase, gathers patterns and context |
-| Planner | Opus | Decomposes specs into task DAGs with wave ordering and implementer assignments |
+| Planner | Opus | Decomposes specs into task DAGs with wave ordering and developer assignments |
 | Implementer | Sonnet | Writes production code (multiple run in parallel) |
 | Tester | Haiku | Writes and runs tests |
 | Reviewer | Sonnet | Reviews diffs, categorizes findings as MUST-FIX / SHOULD-FIX / NITPICK |
 
-### Implementer Identities
+### Developer Identities
 
-Up to 5 implementers can work in parallel, each with their own identity:
+Up to 5 developers can work in parallel, each with their own identity:
 
 | Name | Color |
 |------|-------|
@@ -128,14 +133,14 @@ Browser (React SPA)  ←─ WebSocket ─→  Express Server  ←─ BullMQ ─�
 - **Backend**: Express + WebSocket + BullMQ workers in `web/server/`
 - **Frontend**: React + Vite + Tailwind SPA in `web/client/`
 - **Workers**: BullMQ workers spawn `claude` CLI as child processes
-- **Queue per agent**: One BullMQ queue per implementer for clean isolation
-- **Git worktrees**: Each implementer works in its own worktree; branches are merged between waves
+- **Queue per agent**: One BullMQ queue per developer for clean isolation
+- **Git worktrees**: Each developer works in its own worktree; branches are merged between waves
 
 ### Git Branch Strategy
 
 1. On plan approval: `sprint/<sprint-id>` branch is created from main
-2. Per implementer: worktree on `sprint/<sprint-id>/implementer-N` sub-branch
-3. After each wave: implementer branches merged back to sprint branch, worktrees reset
+2. Per developer: worktree on `sprint/<sprint-id>/developer-N` sub-branch
+3. After each wave: developer branches merged back to sprint branch, worktrees reset
 4. After implementation: worktrees cleaned up, testing/review run on sprint branch
 5. On approval: sprint branch is pushed and a PR is created against main
 
@@ -148,7 +153,7 @@ research → planning → [approval] → wave 1 → merge → wave 2 → ... →
                                                                         │
                                                                   review result
                                                                         │
-                                                                        └── needs fixes → implementer fix → re-review (up to 3 cycles)
+                                                                        └── needs fixes → developer fix → re-review (up to 3 cycles)
 ```
 
 ## Configuration
@@ -162,7 +167,7 @@ REDIS_URL=redis://localhost:6379
 
 # Models
 PLANNER_MODEL=opus
-IMPLEMENTER_MODEL=sonnet
+DEVELOPER_MODEL=sonnet
 REVIEWER_MODEL=sonnet
 RESEARCHER_MODEL=haiku
 TESTER_MODEL=haiku
@@ -176,7 +181,7 @@ DEFAULT_TEST_BUDGET=3.00
 
 # Limits
 MAX_FIX_CYCLES=3
-IMPLEMENTER_COUNT=2
+DEVELOPER_COUNT=2
 
 # Autonomy
 AUTONOMY_MODE=supervised   # supervised | semi-auto | full-auto
@@ -226,7 +231,7 @@ dev-team/
 │   ├── client/
 │   │   └── src/
 │   │       ├── pages/     # Dashboard, Planning, Sprint, Review
-│   │       ├── components/# ImplementerPanel, TaskList, LogViewer, etc.
+│   │       ├── components/# DeveloperPanel, TaskList, LogViewer, etc.
 │   │       └── hooks/     # WebSocket, sprint data
 │   └── shared/
 │       └── types.ts       # Types shared between server and client

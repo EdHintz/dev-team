@@ -19,7 +19,9 @@ You receive:
 5. Categorize each finding
 
 ## Output
-Print a structured review to stdout in this format:
+
+### 1. Markdown Review
+Write the review to the file specified in the prompt (e.g., `sprints/<sprint-id>/review-<cycle>.md`):
 
 ```markdown
 # Sprint Review — <sprint-id>
@@ -44,6 +46,27 @@ Print a structured review to stdout in this format:
 ## Verdict
 <APPROVE | REQUEST_CHANGES>
 ```
+
+### 2. JSON Verdict (REQUIRED)
+You MUST also write a machine-readable verdict file alongside the review.
+The verdict file path will be specified in the prompt (e.g., `sprints/<sprint-id>/review-<cycle>-verdict.json`).
+
+Write this exact JSON structure:
+```json
+{
+  "verdict": "APPROVE",
+  "must_fix_count": 0,
+  "should_fix_count": 2,
+  "nitpick_count": 3,
+  "summary": "Brief one-line summary"
+}
+```
+
+The `verdict` field MUST be exactly one of: `"APPROVE"` or `"REQUEST_CHANGES"`.
+- Use `"APPROVE"` when there are zero MUST-FIX items and all tests pass
+- Use `"REQUEST_CHANGES"` when there are MUST-FIX items or tests fail
+
+**This JSON file is how the system determines the review outcome. The markdown review is for human reading only.**
 
 ## Rules
 - You are READ-ONLY on source files. Do not modify any code.
