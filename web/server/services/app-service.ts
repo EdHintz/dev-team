@@ -69,6 +69,33 @@ export function getApp(id: string): App | undefined {
   return readApps().find((a) => a.id === id);
 }
 
+export function reorderApps(orderedIds: string[]): void {
+  const apps = readApps();
+  const appMap = new Map(apps.map((a) => [a.id, a]));
+  const reordered: App[] = [];
+  for (const id of orderedIds) {
+    const app = appMap.get(id);
+    if (app) {
+      reordered.push(app);
+      appMap.delete(id);
+    }
+  }
+  // Append any apps not in the ordered list (safety net)
+  for (const app of appMap.values()) {
+    reordered.push(app);
+  }
+  writeApps(reordered);
+}
+
+export function deleteApp(id: string): boolean {
+  const apps = readApps();
+  const idx = apps.findIndex((a) => a.id === id);
+  if (idx === -1) return false;
+  apps.splice(idx, 1);
+  writeApps(apps);
+  return true;
+}
+
 export function createApp(name: string, rootFolder: string): App {
   const apps = readApps();
   const id = slugify(name);

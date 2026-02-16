@@ -77,7 +77,10 @@ export function PlanningPage() {
     <div className="max-w-5xl mx-auto">
       <div className="flex items-center gap-4 mb-6">
         <a href="/" className="text-gray-500 hover:text-gray-300 text-sm">&larr; Back</a>
-        <h1 className="text-xl font-bold text-white">{id}</h1>
+        <h1 className="text-xl font-bold text-white">
+          {sprint.name || id}
+          {sprint.name && <span className="text-gray-500 font-normal text-base ml-2">({id})</span>}
+        </h1>
         <SprintStatusBadge status={sprint.status} />
       </div>
 

@@ -42,17 +42,38 @@ export async function createAppOnly(name: string, rootFolder: string): Promise<A
   return res.json();
 }
 
+export async function reorderApps(orderedIds: string[]): Promise<void> {
+  const res = await fetch(`${API_BASE}/apps/reorder`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ orderedIds }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || `HTTP ${res.status}`);
+  }
+}
+
+export async function removeApp(id: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/apps/${id}`, { method: 'DELETE' });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || `HTTP ${res.status}`);
+  }
+}
+
 export async function createAppWithSprint(
   name: string,
   rootFolder: string,
   specPath: string,
   developerCount = 2,
   autonomyMode?: AutonomyMode,
+  sprintName?: string,
 ): Promise<{ app: App; sprint: { id: string; status: string } }> {
   const res = await fetch(`${API_BASE}/apps/with-sprint`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, rootFolder, specPath, developerCount, autonomyMode }),
+    body: JSON.stringify({ name, rootFolder, specPath, developerCount, autonomyMode, sprintName }),
   });
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));

@@ -54,11 +54,11 @@ export function useSprintDetail(sprintId: string | undefined) {
   return { sprint, loading, error, refresh, setSprint };
 }
 
-export async function createSprint(specPath: string, targetDir: string, developerCount = 2, autonomyMode?: AutonomyMode): Promise<{ id: string }> {
+export async function createSprint(specPath: string, targetDir: string, developerCount = 2, autonomyMode?: AutonomyMode, name?: string): Promise<{ id: string }> {
   const res = await fetch(`${API_BASE}/sprints`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ specPath, targetDir, developerCount, autonomyMode }),
+    body: JSON.stringify({ specPath, targetDir, developerCount, autonomyMode, name }),
   });
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));

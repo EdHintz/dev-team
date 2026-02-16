@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, useRef, forwardRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useApps, createAppWithSprint } from '../hooks/use-apps.js';
+import { useApps, createAppWithSprint, removeApp, reorderApps } from '../hooks/use-apps.js';
 import { createSprint, startSprint } from '../hooks/use-sprint.js';
 import { SprintStatusBadge } from '../components/StatusBadge.js';
 import { FileBrowser } from '../components/FileBrowser.js';
@@ -71,6 +71,7 @@ function NewAppForm({ onCreated, onCancel }: { onCreated: () => void; onCancel: 
   const [name, setName] = useState('');
   const [rootFolder, setRootFolder] = useState('');
   const [specPath, setSpecPath] = useState('');
+  const [sprintName, setSprintName] = useState('');
   const [devCount, setImplCount] = useState(2);
   const [autonomyMode, setAutonomyMode] = useState<AutonomyMode>('supervised');
   const [creating, setCreating] = useState(false);
@@ -83,7 +84,7 @@ function NewAppForm({ onCreated, onCancel }: { onCreated: () => void; onCancel: 
     setCreating(true);
     setError(null);
     try {
-      const { sprint } = await createAppWithSprint(name, rootFolder, specPath, devCount, autonomyMode);
+      const { sprint } = await createAppWithSprint(name, rootFolder, specPath, devCount, autonomyMode, sprintName || undefined);
       onCreated();
       navigate(`/sprint/${sprint.id}/planning`);
     } catch (err) {
@@ -169,6 +170,17 @@ function NewAppForm({ onCreated, onCancel }: { onCreated: () => void; onCancel: 
         </div>
 
         <div>
+          <label className="block text-sm text-gray-400 mb-1">Sprint name</label>
+          <input
+            type="text"
+            value={sprintName}
+            onChange={(e) => setSprintName(e.target.value)}
+            placeholder="e.g. Initial build"
+            className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-200 placeholder-gray-600"
+          />
+        </div>
+
+        <div>
           <label className="block text-sm text-gray-400 mb-1">Developers</label>
           <select
             value={devCount}
@@ -206,6 +218,7 @@ function NewAppForm({ onCreated, onCancel }: { onCreated: () => void; onCancel: 
 
 function NewSprintForm({ app, onCreated, onCancel }: { app: AppWithSprints; onCreated: () => void; onCancel: () => void }) {
   const navigate = useNavigate();
+  const [sprintName, setSprintName] = useState('');
   const [specPath, setSpecPath] = useState('');
   const [devCount, setImplCount] = useState(2);
   const [autonomyMode, setAutonomyMode] = useState<AutonomyMode>('supervised');
@@ -218,7 +231,7 @@ function NewSprintForm({ app, onCreated, onCancel }: { app: AppWithSprints; onCr
     setCreating(true);
     setError(null);
     try {
-      const { id } = await createSprint(specPath, app.rootFolder, devCount, autonomyMode);
+      const { id } = await createSprint(specPath, app.rootFolder, devCount, autonomyMode, sprintName || undefined);
       await startSprint(id);
       onCreated();
       navigate(`/sprint/${id}/planning`);
@@ -233,6 +246,17 @@ function NewSprintForm({ app, onCreated, onCancel }: { app: AppWithSprints; onCr
     <div className="border border-gray-700 rounded p-3 mt-3 bg-gray-800/50">
       <h3 className="text-sm font-medium text-gray-300 mb-3">New Sprint for {app.name}</h3>
       <div className="space-y-3">
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">Sprint name</label>
+          <input
+            type="text"
+            value={sprintName}
+            onChange={(e) => setSprintName(e.target.value)}
+            placeholder="e.g. Add user authentication"
+            className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-200 placeholder-gray-600"
+          />
+        </div>
+
         <div>
           <label className="block text-xs text-gray-500 mb-1">Root folder (from app)</label>
           <div className="text-sm text-gray-400 bg-gray-800 rounded px-3 py-2 border border-gray-700">
@@ -306,10 +330,21 @@ function NewSprintForm({ app, onCreated, onCancel }: { app: AppWithSprints; onCr
 
 // --- App Card ---
 
-function AppCard({ app, onRefresh }: { app: AppWithSprints; onRefresh: () => void }) {
+const AppCard = forwardRef<HTMLDivElement, {
+  app: AppWithSprints;
+  onRefresh: () => void;
+  isDragging?: boolean;
+  showDropIndicator?: boolean;
+  dropAbove?: boolean;
+  onDragStart?: (e: React.DragEvent) => void;
+  onDragOver?: (e: React.DragEvent) => void;
+  onDragEnd?: () => void;
+}>(function AppCard({ app, onRefresh, isDragging, showDropIndicator, dropAbove, onDragStart, onDragOver, onDragEnd }, ref) {
   const navigate = useNavigate();
   const [expanded, setExpanded] = useState(app.sprints.length > 0);
   const [showNewSprint, setShowNewSprint] = useState(false);
+  const [showRemoveConfirm, setShowRemoveConfirm] = useState(false);
+  const [removing, setRemoving] = useState(false);
 
   const navigateToSprint = (id: string, status: string) => {
     if (status === 'awaiting-approval' || status === 'researching' || status === 'planning') {
@@ -323,16 +358,57 @@ function AppCard({ app, onRefresh }: { app: AppWithSprints; onRefresh: () => voi
   const doneSprints = app.sprints.filter((s) => ['completed', 'failed', 'cancelled'].includes(s.status));
 
   return (
-    <div className="border border-gray-800 rounded-lg bg-gray-900/50 overflow-hidden">
+    <div ref={ref} className="relative">
+      {showDropIndicator && dropAbove && (
+        <div className="absolute -top-2 left-0 right-0 h-0.5 bg-blue-500 rounded-full z-10" />
+      )}
+      {showDropIndicator && !dropAbove && (
+        <div className="absolute -bottom-2 left-0 right-0 h-0.5 bg-blue-500 rounded-full z-10" />
+      )}
+    <div
+      className={`border border-gray-800 rounded-lg bg-gray-900/50 overflow-hidden transition ${isDragging ? 'opacity-30 scale-[0.98]' : ''}`}
+      onDragOver={onDragOver}
+      onDragEnd={onDragEnd}
+      onDragLeave={() => { /* handled by parent */ }}
+    >
       {/* Card header */}
       <div
-        className="flex items-center justify-between p-4 cursor-pointer hover:bg-gray-800/30 transition"
+        className="flex items-center cursor-pointer hover:bg-gray-800/30 transition"
         onClick={() => setExpanded(!expanded)}
       >
+        {/* Gripper handle — flush against left border */}
+        <div
+          draggable
+          onDragStart={(e) => { e.stopPropagation(); onDragStart?.(e); }}
+          onClick={(e) => e.stopPropagation()}
+          className="cursor-grab active:cursor-grabbing text-gray-600 hover:text-gray-400 transition shrink-0 self-stretch flex items-center px-2 border-r border-gray-800"
+          title="Drag to reorder"
+        >
+          <svg className="w-4 h-5" viewBox="0 0 16 20" fill="currentColor">
+            <circle cx="5" cy="4" r="1.5" />
+            <circle cx="11" cy="4" r="1.5" />
+            <circle cx="5" cy="10" r="1.5" />
+            <circle cx="11" cy="10" r="1.5" />
+            <circle cx="5" cy="16" r="1.5" />
+            <circle cx="11" cy="16" r="1.5" />
+          </svg>
+        </div>
+        <div className="flex items-center justify-between flex-1 p-4">
         <div className="flex items-center gap-3">
           <span className="text-gray-500 text-sm">{expanded ? '\u25BC' : '\u25B6'}</span>
           <div>
-            <div className="font-medium text-white">{app.name}</div>
+            <div className="flex items-center gap-2">
+              <span className="font-medium text-white">{app.name}</span>
+              <button
+                onClick={(e) => { e.stopPropagation(); setShowRemoveConfirm(true); }}
+                className="text-gray-600 hover:text-red-400 transition"
+                title="Remove app reference"
+              >
+                <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM6.75 9.25a.75.75 0 000 1.5h6.5a.75.75 0 000-1.5h-6.5z" clipRule="evenodd" />
+                </svg>
+              </button>
+            </div>
             <div className="text-xs text-gray-500 mt-0.5">{app.rootFolder}</div>
           </div>
         </div>
@@ -347,11 +423,53 @@ function AppCard({ app, onRefresh }: { app: AppWithSprints; onRefresh: () => voi
             New Sprint
           </button>
         </div>
+        </div>
       </div>
+
+      {/* Remove confirmation dialog */}
+      {showRemoveConfirm && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
+          <div className="bg-gray-900 border border-gray-700 rounded-lg p-6 max-w-md w-full mx-4">
+            <h3 className="text-lg font-medium text-white mb-3">Remove Reference</h3>
+            <p className="text-gray-300 text-sm mb-1">
+              This will remove <strong>{app.name}</strong> from the list of apps.
+            </p>
+            <p className="text-gray-400 text-sm mb-4">
+              The app directory ({app.rootFolder}) and its git repo will NOT be deleted.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => setShowRemoveConfirm(false)}
+                className="px-4 py-2 bg-gray-800 text-gray-300 rounded hover:bg-gray-700 text-sm"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  setRemoving(true);
+                  try {
+                    await removeApp(app.id);
+                    setShowRemoveConfirm(false);
+                    onRefresh();
+                  } catch (err) {
+                    console.error('Remove failed:', err);
+                  } finally {
+                    setRemoving(false);
+                  }
+                }}
+                disabled={removing}
+                className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-500 text-sm disabled:opacity-50"
+              >
+                {removing ? 'Removing...' : 'Remove Reference'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Expanded content */}
       {expanded && (
-        <div className="border-t border-gray-800 px-4 pb-4">
+        <div className="border-t border-gray-800 pl-14 pr-4 pb-4">
           {showNewSprint && (
             <NewSprintForm
               app={app}
@@ -376,7 +494,10 @@ function AppCard({ app, onRefresh }: { app: AppWithSprints; onRefresh: () => voi
                   className="flex items-center justify-between px-3 py-2 rounded hover:bg-gray-800 cursor-pointer transition"
                 >
                   <div>
-                    <span className="text-sm text-gray-200">{sprint.id}</span>
+                    <span className="text-sm text-gray-200">
+                      {sprint.name || sprint.id}
+                      {sprint.name && <span className="text-gray-500 ml-1.5">({sprint.id})</span>}
+                    </span>
                     {sprint.spec && (
                       <span className="text-xs text-gray-600 ml-2">{sprint.spec}</span>
                     )}
@@ -407,7 +528,10 @@ function AppCard({ app, onRefresh }: { app: AppWithSprints; onRefresh: () => voi
                   className="flex items-center justify-between px-3 py-2 rounded hover:bg-gray-800 cursor-pointer transition opacity-60"
                 >
                   <div>
-                    <span className="text-sm text-gray-300">{sprint.id}</span>
+                    <span className="text-sm text-gray-300">
+                      {sprint.name || sprint.id}
+                      {sprint.name && <span className="text-gray-500 ml-1.5">({sprint.id})</span>}
+                    </span>
                     {sprint.spec && (
                       <span className="text-xs text-gray-600 ml-2">{sprint.spec}</span>
                     )}
@@ -427,14 +551,70 @@ function AppCard({ app, onRefresh }: { app: AppWithSprints; onRefresh: () => voi
         </div>
       )}
     </div>
+    </div>
   );
-}
+});
 
 // --- Dashboard Page ---
 
 export function DashboardPage() {
   const { apps, loading, error, refresh } = useApps();
   const [showNewApp, setShowNewApp] = useState(false);
+  const dragItem = useRef<number | null>(null);
+  const [dragIdx, setDragIdx] = useState<number | null>(null);
+  const [dropIdx, setDropIdx] = useState<number | null>(null);
+  const cardRefs = useRef<Map<number, HTMLDivElement>>(new Map());
+
+  const handleDragStart = (idx: number, e: React.DragEvent) => {
+    dragItem.current = idx;
+    setDragIdx(idx);
+
+    // Custom drag ghost — semi-transparent clone of the card
+    const el = cardRefs.current.get(idx);
+    if (el) {
+      const ghost = el.cloneNode(true) as HTMLElement;
+      ghost.style.width = `${el.offsetWidth}px`;
+      ghost.style.opacity = '0.7';
+      ghost.style.position = 'absolute';
+      ghost.style.top = '-9999px';
+      ghost.style.pointerEvents = 'none';
+      document.body.appendChild(ghost);
+      e.dataTransfer.setDragImage(ghost, e.nativeEvent.offsetX, e.nativeEvent.offsetY);
+      requestAnimationFrame(() => document.body.removeChild(ghost));
+    }
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragOver = (idx: number, e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (dragItem.current === null || idx === dragItem.current) {
+      setDropIdx(null);
+      return;
+    }
+    setDropIdx(idx);
+  };
+
+  const handleDragEnd = async () => {
+    const from = dragItem.current;
+    const to = dropIdx;
+    dragItem.current = null;
+    setDragIdx(null);
+    setDropIdx(null);
+
+    if (from === null || to === null || from === to) return;
+
+    const reordered = [...apps];
+    const [moved] = reordered.splice(from, 1);
+    reordered.splice(to, 0, moved);
+
+    try {
+      await reorderApps(reordered.map((a) => a.id));
+      refresh();
+    } catch (err) {
+      console.error('Reorder failed:', err);
+    }
+  };
 
   return (
     <div className="max-w-4xl mx-auto">
@@ -465,8 +645,19 @@ export function DashboardPage() {
       )}
 
       <div className="space-y-3">
-        {apps.map((app) => (
-          <AppCard key={app.id} app={app} onRefresh={refresh} />
+        {apps.map((app, idx) => (
+          <AppCard
+            key={app.id}
+            ref={(el: HTMLDivElement | null) => { if (el) cardRefs.current.set(idx, el); else cardRefs.current.delete(idx); }}
+            app={app}
+            onRefresh={refresh}
+            isDragging={dragIdx === idx}
+            showDropIndicator={dropIdx === idx && dragIdx !== null && dragIdx !== idx}
+            dropAbove={dragIdx !== null && dropIdx === idx && dragIdx > idx}
+            onDragStart={(e: React.DragEvent) => handleDragStart(idx, e)}
+            onDragOver={(e: React.DragEvent) => handleDragOver(idx, e)}
+            onDragEnd={handleDragEnd}
+          />
         ))}
       </div>
     </div>

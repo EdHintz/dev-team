@@ -51,6 +51,7 @@ export function registerAppRootFolders(folders: string[]): void {
 
 export interface SprintState {
   id: string;
+  name?: string;
   status: SprintStatus;
   plan: Plan | null;
   tasks: Map<number, TaskState>;
@@ -86,6 +87,7 @@ export function initSprint(
   developerCount = DEFAULT_DEVELOPER_COUNT,
   sprintDir?: string,
   autonomyMode: AutonomyMode = 'supervised',
+  name?: string,
 ): SprintState {
   const resolvedDir = sprintDir || path.join(SPRINTS_DIR, sprintId);
   registerSprintDir(sprintId, resolvedDir);
@@ -102,6 +104,7 @@ export function initSprint(
 
   const state: SprintState = {
     id: sprintId,
+    name,
     status: 'created',
     plan: null,
     tasks: new Map(),
@@ -118,7 +121,7 @@ export function initSprint(
 
   sprints.set(sprintId, state);
   writeStatus(sprintId, 'created');
-  writeMeta(sprintId, { targetDir, specPath, developerCount, createdAt, autonomyMode });
+  writeMeta(sprintId, { targetDir, specPath, developerCount, createdAt, autonomyMode, name });
 
   log.info(`Initialized sprint: ${sprintId}`, { developerCount, autonomyMode });
   return state;
@@ -621,6 +624,7 @@ export function loadSprintFromDisk(sprintId: string, targetDir?: string): Sprint
 
   const state: SprintState = {
     id: sprintId,
+    name: meta?.name,
     status,
     plan,
     tasks: new Map(),
@@ -747,6 +751,7 @@ function loadSprintDetailFromDisk(sprintId: string): SprintDetail {
 
   return {
     id: sprintId,
+    name: meta?.name,
     status,
     spec: plan?.spec || meta?.specPath,
     taskCount: plan?.tasks.length,
@@ -770,6 +775,7 @@ function loadSprintSummaryFromDisk(sprintId: string): SprintSummary {
 
   return {
     id: sprintId,
+    name: meta?.name,
     status,
     spec: plan?.spec,
     taskCount: plan?.tasks.length,
@@ -788,6 +794,7 @@ interface SprintMeta {
   developerCount: number;
   createdAt: string;
   approvedAt?: string;
+  name?: string;
   autonomyMode?: AutonomyMode;
 }
 
@@ -810,6 +817,7 @@ function sprintStateToSummary(state: SprintState): SprintSummary {
   const completedCount = Array.from(state.tasks.values()).filter((t) => t.status === 'completed').length;
   return {
     id: state.id,
+    name: state.name,
     status: state.status,
     spec: state.plan?.spec,
     taskCount: state.plan?.tasks.length,

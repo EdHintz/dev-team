@@ -108,8 +108,13 @@ export async function removeWorktree(targetDir: string, worktreePath: string): P
     await git(['worktree', 'remove', worktreePath, '--force'], targetDir);
     log.info(`Removed worktree: ${worktreePath}`);
   } catch {
-    // Worktree may not exist
-    log.warn(`Could not remove worktree: ${worktreePath}`);
+    log.warn(`Could not remove worktree via git: ${worktreePath}`);
+  }
+
+  // If the directory still exists (orphaned/unrecognized by git), remove it directly
+  if (fs.existsSync(worktreePath)) {
+    fs.rmSync(worktreePath, { recursive: true, force: true });
+    log.info(`Removed orphaned worktree directory: ${worktreePath}`);
   }
 }
 
@@ -338,8 +343,19 @@ export async function setupSprintGit(
     await git(['checkout', '-b', sprintBranch], targetDir);
     log.info(`Created sprint branch: ${sprintBranch}`);
   } catch {
-    // Branch may already exist (restart scenario)
+    // Branch may already exist (restart scenario) — stash dirty state files first
+    const status = await git(['status', '--porcelain'], targetDir);
+    const dirty = status.trim().length > 0;
+    if (dirty) {
+      await git(['stash', 'push', '-m', `setup-${sprintId}`], targetDir);
+    }
     await git(['checkout', sprintBranch], targetDir);
+    if (dirty) {
+      await git(['stash', 'pop'], targetDir).catch(() => {
+        log.warn('Stash pop conflict during setup — dropping stash');
+        git(['stash', 'drop'], targetDir).catch(() => {});
+      });
+    }
     log.info(`Checked out existing sprint branch: ${sprintBranch}`);
   }
 
@@ -365,9 +381,22 @@ export async function mergeWaveAndReset(
 ): Promise<MergeResult[]> {
   const results: MergeResult[] = [];
 
-  // Switch to sprint branch in the main targetDir
+  // Stash any uncommitted changes (e.g. .completed state file) before switching branches
   const sprintBranch = `sprint/${sprintId}`;
+  const stashOutput = await git(['stash', 'push', '-m', `wave-merge-${sprintId}`], targetDir);
+  const didStash = !stashOutput.includes('No local changes');
+
   await git(['checkout', sprintBranch], targetDir);
+
+  // Restore stashed changes so state files remain up-to-date
+  if (didStash) {
+    await git(['stash', 'pop'], targetDir).catch(() => {
+      // If pop conflicts, prefer our stashed version for state files
+      log.warn('Stash pop conflict during wave merge — dropping stash');
+      git(['checkout', '--theirs', '.'], targetDir).catch(() => {});
+      git(['stash', 'drop'], targetDir).catch(() => {});
+    });
+  }
 
   // Merge each developer's branch
   for (const dev of developers) {

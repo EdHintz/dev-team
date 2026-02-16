@@ -43,7 +43,7 @@ sprintRoutes.get('/:id', (req, res) => {
 
 // Create a new sprint
 sprintRoutes.post('/', (req, res) => {
-  const { specPath, targetDir, developerCount, sprintId: requestedId, autonomyMode } = req.body as CreateSprintRequest;
+  const { specPath, targetDir, developerCount, sprintId: requestedId, name, autonomyMode } = req.body as CreateSprintRequest;
 
   // Validate spec file exists — check app-local specs first, then global
   let resolvedSpec: string;
@@ -71,7 +71,7 @@ sprintRoutes.post('/', (req, res) => {
   fs.copyFileSync(resolvedSpec, path.join(sprintDir, 'spec.md'));
 
   // Initialize sprint state
-  const sprint = initSprint(sprintId, resolvedSpec, targetDir, developerCount, sprintDir, autonomyMode);
+  const sprint = initSprint(sprintId, resolvedSpec, targetDir, developerCount, sprintDir, autonomyMode, name);
 
   broadcast({ type: 'sprint:status', sprintId, status: sprint.status });
 

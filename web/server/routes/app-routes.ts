@@ -4,7 +4,7 @@ import { Router } from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
 import { SPECS_DIR, generateSprintId } from '../config.js';
-import { listApps, getApp, createApp, getAppSprintsDir, getAppSpecsDir } from '../services/app-service.js';
+import { listApps, getApp, createApp, deleteApp, reorderApps, getAppSprintsDir, getAppSpecsDir } from '../services/app-service.js';
 import { listSprints, initSprint, setSprintStatus } from '../services/state-service.js';
 import { broadcast } from '../websocket/ws-server.js';
 import type { AppWithSprints } from '../../shared/types.js';
@@ -54,9 +54,36 @@ appRoutes.post('/', (req, res) => {
   }
 });
 
+// Reorder apps
+appRoutes.put('/reorder', (req, res) => {
+  const { orderedIds } = req.body;
+  if (!Array.isArray(orderedIds)) {
+    res.status(400).json({ error: 'orderedIds array is required' });
+    return;
+  }
+  try {
+    reorderApps(orderedIds);
+    res.json({ ok: true });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Failed to reorder';
+    res.status(500).json({ error: message });
+  }
+});
+
+// Remove an app reference (does not delete the directory)
+appRoutes.delete('/:id', (req, res) => {
+  const { id } = req.params;
+  const deleted = deleteApp(id);
+  if (!deleted) {
+    res.status(404).json({ error: 'App not found' });
+    return;
+  }
+  res.json({ ok: true });
+});
+
 // Create an app + first sprint, then auto-start planning
 appRoutes.post('/with-sprint', async (req, res) => {
-  const { name, rootFolder, specPath, developerCount = 2, autonomyMode } = req.body;
+  const { name, rootFolder, specPath, developerCount = 2, autonomyMode, sprintName } = req.body;
 
   if (!name || !rootFolder || !specPath) {
     res.status(400).json({ error: 'name, rootFolder, and specPath are required' });
@@ -117,7 +144,7 @@ appRoutes.post('/with-sprint', async (req, res) => {
     return;
   }
 
-  const sprint = initSprint(sprintId, resolvedSpec, rootFolder, developerCount, sprintDir, autonomyMode);
+  const sprint = initSprint(sprintId, resolvedSpec, rootFolder, developerCount, sprintDir, autonomyMode, sprintName);
   broadcast({ type: 'sprint:status', sprintId, status: sprint.status });
 
   // Auto-start planning

@@ -79,6 +79,7 @@ export interface CostData {
 
 export interface SprintSummary {
   id: string;
+  name?: string;
   status: SprintStatus;
   spec?: string;
   taskCount?: number;
@@ -151,6 +152,7 @@ export interface CreateSprintRequest {
   targetDir: string;
   developerCount?: number;
   sprintId?: string;
+  name?: string;
   autonomyMode?: AutonomyMode;
 }
 

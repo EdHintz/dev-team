@@ -193,7 +193,10 @@ export function SprintPage() {
       <div className="mb-6">
         <div className="flex items-center gap-4 mb-2">
           <a href="/" className="text-gray-500 hover:text-gray-300 text-sm">&larr; Back</a>
-          <h1 className="text-xl font-bold text-white">{id}</h1>
+          <h1 className="text-xl font-bold text-white">
+            {sprint.name || id}
+            {sprint.name && <span className="text-gray-500 font-normal text-base ml-2">({id})</span>}
+          </h1>
           <SprintStatusBadge status={sprint.status} />
           {sprint.currentWave > 0 && (
             <span className="text-sm text-gray-500">Wave {sprint.currentWave}</span>
@@ -365,8 +368,12 @@ function isActiveStatus(status: string): boolean {
   return ACTIVE_STATUSES.has(status);
 }
 
+const AGENT_ORDER: Record<string, number> = { researcher: 0, planner: 1, developer: 2, implementer: 2, tester: 3, reviewer: 4 };
+const AGENT_LABELS: Record<string, string> = { implementer: 'Developer' };
+
 function EstimateLine({ estimates, costs, status, approvedAt }: { estimates: PlanEstimates; costs: CostData; status: string; approvedAt?: string }) {
-  const agentEntries = Object.entries(costs.by_agent);
+  const agentEntries = Object.entries(costs.by_agent)
+    .sort(([a], [b]) => (AGENT_ORDER[a] ?? 99) - (AGENT_ORDER[b] ?? 99));
 
   const active = isActiveStatus(status);
 
@@ -425,12 +432,22 @@ function EstimateLine({ estimates, costs, status, approvedAt }: { estimates: Pla
               {showBreakdown && (
                 <div className="absolute top-full right-0 mt-1 z-10 bg-gray-800 border border-gray-700 rounded-lg p-3 min-w-[180px] shadow-lg">
                   <div className="space-y-1.5">
-                    {agentEntries.map(([agent, seconds]) => (
-                      <div key={agent} className="flex justify-between text-xs gap-4">
-                        <span className="text-gray-400 capitalize">{agent}</span>
-                        <span className="text-gray-500 tabular-nums">{formatDuration(seconds)}</span>
-                      </div>
-                    ))}
+                    {agentEntries.map(([agent, seconds], i) => {
+                      const prevAgent = i > 0 ? agentEntries[i - 1][0] : '';
+                      const prevGroup = AGENT_ORDER[prevAgent] ?? -1;
+                      const curGroup = AGENT_ORDER[agent] ?? 99;
+                      const showSep = i > 0 && curGroup > 2 && prevGroup <= 2;
+                      const label = AGENT_LABELS[agent] || agent.charAt(0).toUpperCase() + agent.slice(1);
+                      return (
+                        <div key={agent}>
+                          {showSep && <div className="border-t border-gray-700 my-1.5" />}
+                          <div className="flex justify-between text-xs gap-4">
+                            <span className="text-gray-400">{label}</span>
+                            <span className="text-gray-500 tabular-nums">{formatDuration(seconds)}</span>
+                          </div>
+                        </div>
+                      );
+                    })}
                     <div className="border-t border-gray-700 pt-1.5 mt-1.5 flex justify-between text-xs font-medium">
                       <span className="text-gray-300">Total</span>
                       <span className="text-gray-300 tabular-nums">{formatDuration(agentTotal)}</span>
