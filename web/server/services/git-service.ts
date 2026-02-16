@@ -12,7 +12,10 @@ const log = createLogger('git');
 export interface MergeResult {
   success: boolean;
   conflicts?: string[];
+  resolved?: boolean;
 }
+
+export type ConflictResolver = (targetDir: string, conflicts: string[]) => Promise<void>;
 
 async function git(args: string[], cwd: string, quiet = false): Promise<string> {
   try {
@@ -151,6 +154,7 @@ export async function mergeDeveloperBranch(
   sprintId: string,
   developerId: string,
   friendlyName?: string,
+  conflictResolver?: ConflictResolver,
 ): Promise<MergeResult> {
   const sprintBranch = `sprint/${sprintId}`;
   const suffix = friendlyName ? friendlyName.toLowerCase() : developerId;
@@ -164,13 +168,40 @@ export async function mergeDeveloperBranch(
     log.info(`Merged ${devBranch} into ${sprintBranch}`);
     return { success: true };
   } catch (err) {
-    // Check for merge conflicts
+    // Check for merge conflicts — execFileAsync puts git output in stderr, not message
     const message = err instanceof Error ? err.message : '';
-    if (message.includes('CONFLICT') || message.includes('Automatic merge failed')) {
+    const stderr = (err as { stderr?: string }).stderr || '';
+    if (
+      message.includes('CONFLICT') || message.includes('Automatic merge failed') ||
+      stderr.includes('CONFLICT') || stderr.includes('Automatic merge failed')
+    ) {
       const conflicts = await getConflictFiles(targetDir);
       log.warn(`Merge conflicts detected`, { devBranch, conflicts });
 
-      // Abort the merge for now — let the orchestrator decide what to do
+      // If a resolver is provided, attempt agent-based resolution
+      if (conflictResolver && conflicts.length > 0) {
+        try {
+          await conflictResolver(targetDir, conflicts);
+
+          // Verify no remaining conflicts
+          const remaining = await getConflictFiles(targetDir);
+          if (remaining.length === 0) {
+            await git(['commit', '--no-edit'], targetDir);
+            log.info(`Merge conflicts resolved by agent`, { devBranch, conflicts });
+            return { success: true, conflicts, resolved: true };
+          }
+
+          log.warn(`Agent left unresolved conflicts`, { devBranch, remaining });
+          await git(['merge', '--abort'], targetDir);
+          return { success: false, conflicts: remaining };
+        } catch (resolveErr) {
+          log.error(`Conflict resolver failed`, { devBranch, error: String(resolveErr) });
+          await git(['merge', '--abort'], targetDir);
+          return { success: false, conflicts };
+        }
+      }
+
+      // No resolver — abort the merge
       await git(['merge', '--abort'], targetDir);
       return { success: false, conflicts };
     }
@@ -330,6 +361,7 @@ export async function mergeWaveAndReset(
   targetDir: string,
   sprintId: string,
   developers: { id: string; name: string }[],
+  conflictResolver?: ConflictResolver,
 ): Promise<MergeResult[]> {
   const results: MergeResult[] = [];
 
@@ -339,7 +371,7 @@ export async function mergeWaveAndReset(
 
   // Merge each developer's branch
   for (const dev of developers) {
-    const result = await mergeDeveloperBranch(targetDir, sprintId, dev.id, dev.name);
+    const result = await mergeDeveloperBranch(targetDir, sprintId, dev.id, dev.name, conflictResolver);
     results.push(result);
     if (!result.success) {
       log.warn(`Merge conflict from ${dev.name}`, { conflicts: result.conflicts });
@@ -366,9 +398,10 @@ export async function finalizeImplementation(
   targetDir: string,
   sprintId: string,
   developers: { id: string; name: string }[],
+  conflictResolver?: ConflictResolver,
 ): Promise<void> {
   // Final merge
-  await mergeWaveAndReset(targetDir, sprintId, developers);
+  await mergeWaveAndReset(targetDir, sprintId, developers, conflictResolver);
 
   // Clean up worktrees
   const developerIds = developers.map((i) => i.id);
