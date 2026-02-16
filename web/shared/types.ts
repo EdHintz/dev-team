@@ -85,6 +85,7 @@ export interface SprintSummary {
   completedCount?: number;
   developerCount?: number;
   createdAt?: string;
+  approvedAt?: string;
   targetDir?: string;
   autonomyMode?: AutonomyMode;
 }

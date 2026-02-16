@@ -6,7 +6,7 @@ import path from 'node:path';
 import { getRedisConnection } from '../utils/redis.js';
 import { BUDGETS } from '../config.js';
 import { runAgentJob } from './base-worker.js';
-import { setSprintStatus, setSprintPlan, getSprintDir, sprintNeedsApproval } from '../services/state-service.js';
+import { setSprintStatus, setSprintPlan, setSprintApprovedAt, getSprintDir, sprintNeedsApproval } from '../services/state-service.js';
 import { broadcast } from '../websocket/ws-server.js';
 import { startImplementation } from '../services/sprint-lifecycle.js';
 import { createLogger } from '../utils/logger.js';
@@ -92,6 +92,7 @@ Write the plan to: ${path.join(getSprintDir(sprintId), 'plan.json')}`;
       // Auto-approve: skip waiting and start implementation directly
       log.info(`Auto-approving plan for ${sprintId} (autonomy mode)`);
       setSprintStatus(sprintId, 'approved');
+      setSprintApprovedAt(sprintId);
       broadcast({ type: 'sprint:status', sprintId, status: 'approved' });
 
       try {

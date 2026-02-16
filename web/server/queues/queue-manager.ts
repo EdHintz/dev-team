@@ -317,6 +317,30 @@ export function getImplementationQueue(developerId: string): Queue | undefined {
   return implementationQueues.get(developerId);
 }
 
+// --- Subtask Enqueueing ---
+
+export async function enqueueSubtask(
+  sprintId: string,
+  task: { id: number; title: string; description: string; assigned_to?: string; [key: string]: unknown },
+  developerId: string,
+): Promise<void> {
+  const sprint = getSprintOrThrow(sprintId);
+  const queue = implementationQueues.get(developerId);
+  if (!queue) throw new Error(`No queue found for ${developerId}`);
+
+  await queue.add('implement', {
+    sprintId,
+    taskId: task.id,
+    taskDetails: task,
+    developerId,
+    targetDir: sprint.targetDir,
+  }, {
+    jobId: `impl-${sprintId}-${task.id}-sub-${Date.now()}`,
+  });
+
+  log.info(`Enqueued subtask ${task.id} for ${developerId} in ${sprintId}`);
+}
+
 // --- Restart / Retry ---
 
 export async function reEnqueueTask(sprintId: string, taskId: number): Promise<void> {

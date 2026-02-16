@@ -262,7 +262,7 @@ export function SprintPage() {
           </div>
         )}
         {sprint.plan?.estimates && (
-          <EstimateLine estimates={sprint.plan.estimates} costs={sprint.costs} status={sprint.status} createdAt={sprint.createdAt} />
+          <EstimateLine estimates={sprint.plan.estimates} costs={sprint.costs} status={sprint.status} approvedAt={sprint.approvedAt} />
         )}
       </div>
 
@@ -365,26 +365,28 @@ function isActiveStatus(status: string): boolean {
   return ACTIVE_STATUSES.has(status);
 }
 
-function EstimateLine({ estimates, costs, status, createdAt }: { estimates: PlanEstimates; costs: CostData; status: string; createdAt?: string }) {
+function EstimateLine({ estimates, costs, status, approvedAt }: { estimates: PlanEstimates; costs: CostData; status: string; approvedAt?: string }) {
   const agentEntries = Object.entries(costs.by_agent);
 
   const active = isActiveStatus(status);
 
-  // Wall clock elapsed time since sprint creation
+  // Wall clock elapsed time since sprint plan approval
   const [wallSeconds, setWallSeconds] = useState(() => {
-    if (!createdAt) return 0;
-    return Math.max(0, Math.floor((Date.now() - new Date(createdAt).getTime()) / 1000));
+    if (!approvedAt) return 0;
+    return Math.max(0, Math.floor((Date.now() - new Date(approvedAt).getTime()) / 1000));
   });
+  const [colonVisible, setColonVisible] = useState(true);
   useEffect(() => {
-    if (!createdAt) return;
-    const start = new Date(createdAt).getTime();
+    if (!approvedAt) return;
+    const start = new Date(approvedAt).getTime();
     setWallSeconds(Math.max(0, Math.floor((Date.now() - start) / 1000)));
     if (!active) return;
     const t = setInterval(() => {
       setWallSeconds(Math.max(0, Math.floor((Date.now() - start) / 1000)));
+      setColonVisible((v) => !v);
     }, 1000);
     return () => clearInterval(t);
-  }, [active, createdAt]);
+  }, [active, approvedAt]);
 
   const actualSeconds = wallSeconds;
 
@@ -410,8 +412,7 @@ function EstimateLine({ estimates, costs, status, createdAt }: { estimates: Plan
         <div className="relative flex items-center gap-x-2">
           <span>
             <span className="text-gray-500">Actual:</span>{' '}
-            <span className={`text-blue-300${active ? ' tabular-nums' : ''}`}>&#x1F916; {formatDuration(actualSeconds)}</span>
-            {active && <span className="inline-block w-1 ml-0.5 text-blue-400 animate-pulse">:</span>}
+            <span className={`text-blue-300${active ? ' tabular-nums' : ''}`}>&#x1F916; {formatDuration(actualSeconds, active ? colonVisible : true)}</span>
           </span>
           {agentEntries.length > 0 && (
             <>
@@ -445,14 +446,14 @@ function EstimateLine({ estimates, costs, status, createdAt }: { estimates: Plan
   );
 }
 
-function formatDuration(seconds: number): string {
-  if (seconds < 60) return `${Math.round(seconds)}s`;
+function formatDuration(seconds: number, showColon = true): string {
   const mins = Math.floor(seconds / 60);
   const secs = Math.round(seconds % 60);
+  const sep = showColon ? ':' : '\u00A0';
   if (mins >= 60) {
     const hrs = Math.floor(mins / 60);
     const remainMins = mins % 60;
-    return `${hrs}h ${remainMins}m`;
+    return `${hrs}h ${String(remainMins).padStart(2, '0')}${sep}${String(secs).padStart(2, '0')}`;
   }
-  return `${mins}m ${secs}s`;
+  return `${String(mins).padStart(2, '0')}${sep}${String(secs).padStart(2, '0')}`;
 }

@@ -28,6 +28,7 @@ export interface RunAgentOptions {
 
 export interface AgentResult {
   output: string;
+  stderr: string;
   exitCode: number;
   durationSeconds: number;
   logFile?: string;
@@ -160,6 +161,7 @@ export async function runAgent(options: RunAgentOptions): Promise<AgentResult> {
 
       resolve({
         output,
+        stderr: errorChunks.join(''),
         exitCode,
         durationSeconds,
         logFile,

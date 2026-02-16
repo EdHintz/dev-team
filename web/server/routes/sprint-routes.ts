@@ -10,6 +10,7 @@ import {
   getSprint,
   getSprintDetail,
   setSprintStatus,
+  setSprintApprovedAt,
   getSprintDir,
 } from '../services/state-service.js';
 import { getAppSprintsDir, getAppSpecsDir } from '../services/app-service.js';
@@ -120,6 +121,7 @@ sprintRoutes.post('/:id/approve', async (req, res) => {
   }
 
   setSprintStatus(id, 'approved');
+  setSprintApprovedAt(id);
   broadcast({ type: 'sprint:status', sprintId: id, status: 'approved' });
 
   // Resolve the pending approval if one exists

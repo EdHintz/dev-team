@@ -47,3 +47,35 @@ export async function runAgentJob(
 
   return result;
 }
+
+/**
+ * Like runAgentJob but does NOT throw on non-zero exit code.
+ * Returns the AgentResult so the caller can inspect stderr and decide whether to retry.
+ */
+export async function runAgentJobSafe(
+  job: Job,
+  agentName: string,
+  prompt: string,
+  options: Partial<RunAgentOptions> = {},
+): Promise<AgentResult> {
+  const data = job.data as BaseJobData;
+
+  return runAgent({
+    agentName,
+    prompt,
+    sprintId: data.sprintId,
+    cwd: options.cwd || data.targetDir,
+    ...options,
+    onStdout: (line) => {
+      job.updateProgress({
+        type: 'log',
+        sprintId: data.sprintId,
+        taskId: (job.data as { taskId?: number }).taskId,
+        line,
+      });
+    },
+    onStderr: (line) => {
+      log.warn(`[${agentName}] stderr: ${line}`);
+    },
+  });
+}

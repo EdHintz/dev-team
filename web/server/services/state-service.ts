@@ -9,6 +9,7 @@ import type {
   SprintStatus,
   TaskStatus,
   TaskState,
+  Task,
   Plan,
   CostData,
   SprintSummary,
@@ -62,6 +63,7 @@ export interface SprintState {
   specPath: string;
   autonomyMode: AutonomyMode;
   createdAt: string;
+  approvedAt?: string;
 }
 
 export interface PendingApproval {
@@ -182,6 +184,7 @@ export function getOrHydrateSprint(sprintId: string): SprintState | undefined {
     specPath: meta.specPath,
     autonomyMode: meta.autonomyMode || 'supervised',
     createdAt: meta.createdAt,
+    approvedAt: meta.approvedAt,
   };
 
   sprints.set(sprintId, state);
@@ -296,6 +299,17 @@ export function setSprintStatus(sprintId: string, status: SprintStatus): void {
   sprint.status = status;
   writeStatus(sprintId, status);
   log.info(`Sprint ${sprintId} status: ${status}`);
+}
+
+export function setSprintApprovedAt(sprintId: string): void {
+  const sprint = getSprintOrThrow(sprintId);
+  sprint.approvedAt = new Date().toISOString();
+  // Update meta on disk
+  const meta = readMeta(sprintId);
+  if (meta) {
+    meta.approvedAt = sprint.approvedAt;
+    writeMeta(sprintId, meta);
+  }
 }
 
 export function setSprintPlan(sprintId: string, plan: Plan): void {
@@ -448,6 +462,61 @@ export function sprintNeedsApproval(sprintId: string, stepType: 'plan' | 'task' 
   }
 }
 
+// --- Subtask Injection ---
+
+/**
+ * Dynamically add subtasks to an existing sprint plan.
+ * Assigns incrementing IDs starting from max existing ID + 1.
+ * Creates TaskState entries and persists updated plan.json to disk.
+ */
+export function addSubtasks(sprintId: string, parentTaskId: number, subtasks: Omit<Task, 'id' | 'depends_on'>[]): Task[] {
+  const sprint = getSprintOrThrow(sprintId);
+  if (!sprint.plan) throw new Error(`No plan found for sprint ${sprintId}`);
+
+  // Find the parent task to inherit wave and assignment
+  const parentTask = sprint.plan.tasks.find((t) => t.id === parentTaskId);
+  const wave = parentTask?.wave || 1;
+  const assignedTo = parentTask?.assigned_to;
+
+  // Determine next available ID
+  const maxId = Math.max(...sprint.plan.tasks.map((t) => t.id), 0);
+  const newTasks: Task[] = [];
+
+  for (let i = 0; i < subtasks.length; i++) {
+    const newId = maxId + 1 + i;
+    const task: Task = {
+      id: newId,
+      title: subtasks[i].title,
+      description: subtasks[i].description,
+      acceptance_criteria: subtasks[i].acceptance_criteria || [],
+      files_touched: subtasks[i].files_touched || [],
+      depends_on: [],
+      wave,
+      assigned_to: assignedTo,
+      agent: 'implementer',
+      labels: ['auto-decomposed'],
+    };
+
+    sprint.plan.tasks.push(task);
+    sprint.tasks.set(newId, {
+      taskId: newId,
+      status: 'pending',
+      developerId: assignedTo,
+    });
+    newTasks.push(task);
+  }
+
+  // Persist updated plan to disk
+  const planFile = path.join(getSprintDir(sprintId), 'plan.json');
+  fs.writeFileSync(planFile, JSON.stringify(sprint.plan, null, 2));
+
+  log.info(`Added ${newTasks.length} subtasks for task ${parentTaskId} in sprint ${sprintId}`, {
+    newIds: newTasks.map((t) => t.id),
+  });
+
+  return newTasks;
+}
+
 // --- Restart / Retry ---
 
 export function resetTaskStatus(sprintId: string, taskId: number): void {
@@ -559,6 +628,8 @@ export function loadSprintFromDisk(sprintId: string, targetDir?: string): Sprint
     targetDir: resolvedTargetDir,
     specPath: plan?.spec || meta?.specPath || '',
     autonomyMode: meta?.autonomyMode || 'supervised',
+    createdAt: meta?.createdAt || '',
+    approvedAt: meta?.approvedAt,
   };
 
   if (plan) {
@@ -677,6 +748,7 @@ function loadSprintDetailFromDisk(sprintId: string): SprintDetail {
     taskCount: plan?.tasks.length,
     completedCount: completed.size,
     developerCount,
+    approvedAt: meta?.approvedAt,
     plan,
     tasks,
     developers,
@@ -700,6 +772,7 @@ function loadSprintSummaryFromDisk(sprintId: string): SprintSummary {
     completedCount: completed.size,
     developerCount: plan?.developer_count || DEFAULT_DEVELOPER_COUNT,
     createdAt: meta?.createdAt,
+    approvedAt: meta?.approvedAt,
     targetDir: meta?.targetDir,
     autonomyMode: meta?.autonomyMode,
   };
@@ -710,6 +783,7 @@ interface SprintMeta {
   specPath: string;
   developerCount: number;
   createdAt: string;
+  approvedAt?: string;
   autonomyMode?: AutonomyMode;
 }
 
@@ -738,6 +812,7 @@ function sprintStateToSummary(state: SprintState): SprintSummary {
     completedCount,
     developerCount: state.developers.length,
     createdAt: state.createdAt,
+    approvedAt: state.approvedAt,
     targetDir: state.targetDir,
     autonomyMode: state.autonomyMode,
   };
