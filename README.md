@@ -102,11 +102,11 @@ npm run dev:all
 
 | Agent | Model | Role |
 |-------|-------|------|
-| Researcher | Haiku | Explores codebase, gathers patterns and context |
+| Researcher | Opus | Explores codebase, gathers patterns and context |
 | Planner | Opus | Decomposes specs into task DAGs with wave ordering and developer assignments |
-| Implementer | Sonnet | Writes production code (multiple run in parallel) |
-| Tester | Haiku | Writes and runs tests |
-| Reviewer | Sonnet | Reviews diffs, categorizes findings as MUST-FIX / SHOULD-FIX / NITPICK |
+| Developer | Opus | Writes production code (multiple run in parallel) |
+| Tester | Opus | Writes and runs tests |
+| Reviewer | Opus | Reviews diffs, categorizes findings as MUST-FIX / SHOULD-FIX / NITPICK |
 
 ### Developer Identities
 
@@ -167,10 +167,10 @@ REDIS_URL=redis://localhost:6379
 
 # Models
 PLANNER_MODEL=opus
-DEVELOPER_MODEL=sonnet
-REVIEWER_MODEL=sonnet
-RESEARCHER_MODEL=haiku
-TESTER_MODEL=haiku
+DEVELOPER_MODEL=opus
+REVIEWER_MODEL=opus
+RESEARCHER_MODEL=opus
+TESTER_MODEL=opus
 
 # Budgets (USD per agent session)
 DEFAULT_PLAN_BUDGET=3.00

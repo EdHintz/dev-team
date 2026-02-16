@@ -106,7 +106,7 @@ Create a detailed task breakdown and write it as JSON to ${sprint_dir}/plan.json
 Follow the format specified in your agent definition. Ensure:
 - Tasks are ordered by dependency
 - Each task has clear acceptance criteria
-- Agent assignments (implementer vs tester) are appropriate
+- Agent assignments (developer vs tester) are appropriate
 - Task granularity allows single-session completion
 EOF
 )"

@@ -158,7 +158,7 @@ for t in plan['tasks']:
     prompt="Fix the following PR review comments:\n\n${review_comments}\n\n${comments}\n\nRead the relevant files, apply the fixes, and stage the changes."
 
     source "${SCRIPT_DIR}/lib/agent.sh"
-    run_agent "implementer" "$prompt" --budget "$DEFAULT_TASK_BUDGET"
+    run_agent "developer" "$prompt" --budget "$DEFAULT_TASK_BUDGET"
 
     if needs_approval "commit"; then
       confirm_or_exit "Commit the fixes?"

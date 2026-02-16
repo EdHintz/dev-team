@@ -3,7 +3,7 @@
 You are the integration tester. Multiple developers worked on this sprint in parallel worktrees — their code has just been merged. Your job is to verify everything works together and catch cross-task breakage.
 
 ## Model
-haiku
+opus
 
 ## Input
 You receive:

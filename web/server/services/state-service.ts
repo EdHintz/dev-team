@@ -353,9 +353,13 @@ function normalizePlan(plan: Plan): void {
       log.warn(`Planner produced non-numeric task ID, defaulted to ${task.id}`);
     }
 
-    // Default agent to 'implementer' if it has an assigned_to
+    // Normalize agent: map legacy 'implementer' → 'developer'
+    if ((task.agent as string) === 'implementer') {
+      task.agent = 'developer';
+    }
+    // Default agent to 'developer' if it has an assigned_to
     if (!task.agent && task.assigned_to) {
-      task.agent = 'implementer';
+      task.agent = 'developer';
     }
 
     // Normalize depends_on IDs to integers
@@ -493,7 +497,7 @@ export function addSubtasks(sprintId: string, parentTaskId: number, subtasks: Om
       depends_on: [],
       wave,
       assigned_to: assignedTo,
-      agent: 'implementer',
+      agent: 'developer',
       labels: ['auto-decomposed'],
     };
 

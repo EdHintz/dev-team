@@ -30,7 +30,7 @@ export interface Task {
   id: number;
   title: string;
   description: string;
-  agent?: 'implementer' | 'tester';
+  agent?: 'developer' | 'tester';
   depends_on: number[];
   complexity?: 'small' | 'medium' | 'large';
   labels?: string[];

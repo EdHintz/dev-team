@@ -38,7 +38,7 @@ export const BUDGETS = {
 // --- Model Selection ---
 export const MODELS = {
   planner: process.env.PLANNER_MODEL || 'opus',
-  implementer: process.env.DEVELOPER_MODEL || 'opus',
+  developer: process.env.DEVELOPER_MODEL || 'opus',
   reviewer: process.env.REVIEWER_MODEL || 'opus',
   researcher: process.env.RESEARCHER_MODEL || 'opus',
   tester: process.env.TESTER_MODEL || 'opus',

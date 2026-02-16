@@ -3,7 +3,7 @@
 You are the code reviewer. You review the sprint's diff and produce structured feedback.
 
 ## Model
-sonnet
+opus
 
 ## Input
 You receive:

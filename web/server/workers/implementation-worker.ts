@@ -1,4 +1,4 @@
-// Implementation worker: runs implementer agents on assigned tasks
+// Implementation worker: runs developer agents on assigned tasks
 // One worker instance per developer, consuming from their dedicated queue
 
 import { Worker, Job } from 'bullmq';
@@ -27,15 +27,24 @@ interface ImplementationJobData {
   reviewFindings?: string;
 }
 
-const MAX_API_RETRIES = 3;
+const MAX_API_RETRIES = 2;
 
 /**
- * Detect whether an agent failure was caused by an API 400 error
- * (typically prompt too long or response too large).
+ * Detect whether an agent failure was caused by an API 400/prompt-too-long error.
+ * Checks both stdout and stderr since the Claude CLI may report errors on either stream.
  */
-function isApi400Error(stderr: string): boolean {
-  const lower = stderr.toLowerCase();
-  return lower.includes('api error: 400') || (lower.includes('400') && lower.includes('bad request'));
+function isPromptTooLargeError(result: { stderr: string; output: string }): boolean {
+  const combined = (result.stderr + '\n' + result.output).toLowerCase();
+  return (
+    combined.includes('api error: 400') ||
+    (combined.includes('400') && combined.includes('bad request')) ||
+    combined.includes('prompt is too long') ||
+    combined.includes('invalid_request_error') ||
+    combined.includes('request too large') ||
+    combined.includes('max tokens') ||
+    combined.includes('context length exceeded') ||
+    combined.includes('too many tokens')
+  );
 }
 
 /**
@@ -128,11 +137,12 @@ async function runWithRetry(
   research: string,
   planContent: string,
   budget: string,
+  agentName: string,
 ): Promise<AgentResult> {
   for (let attempt = 1; attempt <= MAX_API_RETRIES; attempt++) {
     const prompt = buildPrompt(attempt, taskId, sprintId, taskDetails, cwd, research, planContent);
 
-    const result = await runAgentJobSafe(job, 'implementer', prompt, {
+    const result = await runAgentJobSafe(job, agentName, prompt, {
       budget,
       taskId: String(taskId),
       cwd,
@@ -142,24 +152,40 @@ async function runWithRetry(
       return result;
     }
 
-    if (isApi400Error(result.stderr) && attempt < MAX_API_RETRIES) {
-      log.warn(`Task ${taskId} hit API 400 error on attempt ${attempt}/${MAX_API_RETRIES}, retrying with simplified prompt`);
+    if (isPromptTooLargeError(result) && attempt < MAX_API_RETRIES) {
+      log.warn(`Task ${taskId} hit prompt-too-large error on attempt ${attempt}/${MAX_API_RETRIES}, retrying with simplified prompt`, {
+        promptLength: prompt.length,
+        prompt: prompt.slice(0, 2000),
+        stderr: result.stderr.slice(0, 500),
+      });
       broadcast({
         type: 'task:log',
         sprintId,
         taskId,
         developerId: job.data.developerId,
-        line: `API 400 error — retrying with simplified prompt (attempt ${attempt + 1}/${MAX_API_RETRIES})`,
+        line: `Prompt too large — retrying with simplified prompt (attempt ${attempt + 1}/${MAX_API_RETRIES})`,
       });
       continue;
     }
 
-    if (isApi400Error(result.stderr) && attempt === MAX_API_RETRIES) {
+    if (isPromptTooLargeError(result) && attempt === MAX_API_RETRIES) {
+      log.error(`Task ${taskId} too complex after ${MAX_API_RETRIES} attempts`, {
+        promptLength: prompt.length,
+        prompt: prompt.slice(0, 2000),
+        stderr: result.stderr.slice(0, 500),
+      });
       throw new Error('TASK_TOO_COMPLEX');
     }
 
-    // Non-400 failure — throw immediately
-    throw new Error(`Agent implementer failed with exit code ${result.exitCode}`);
+    // Non-400 failure — log and throw immediately
+    log.error(`Task ${taskId} agent failure (non-retryable)`, {
+      exitCode: result.exitCode,
+      promptLength: prompt.length,
+      prompt: prompt.slice(0, 2000),
+      stderr: result.stderr.slice(0, 500),
+      stdout: result.output.slice(-500),
+    });
+    throw new Error(`Agent ${agentName} failed with exit code ${result.exitCode}`);
   }
 
   // Should not reach here, but just in case
@@ -211,15 +237,16 @@ Keep each subtask small enough to complete in a single focused session.`;
     return;
   }
 
-  // Mark original task as failed with descriptive error
-  setTaskStatus(sprintId, taskId, 'failed', developerId);
-  broadcast({ type: 'task:status', sprintId, taskId, status: 'failed', developerId });
+  // Mark original task as completed so it doesn't block wave progression.
+  // The subtasks now carry the actual work.
+  setTaskStatus(sprintId, taskId, 'completed', developerId);
+  broadcast({ type: 'task:status', sprintId, taskId, status: 'completed', developerId });
   broadcast({
     type: 'task:log',
     sprintId,
     taskId,
     developerId,
-    line: `Decomposed into ${data.subtasks.length} subtasks`,
+    line: `Decomposed into ${data.subtasks.length} subtasks — original task marked complete`,
   });
 
   // Add subtasks to the sprint plan
@@ -279,7 +306,7 @@ function createConflictResolver(sprintId: string): ConflictResolver {
     const prompt = buildConflictResolutionPrompt(targetDir, conflicts);
 
     const result = await runAgent({
-      agentName: 'implementer',
+      agentName: 'developer',
       prompt,
       budget: String(BUDGETS.task),
       maxTurns: 30,
@@ -346,7 +373,7 @@ Instructions:
 5. Stage your changes with git add (but do NOT commit)
 6. Print a summary of what you fixed`;
 
-      const result = await runAgentJob(job, 'implementer', prompt, {
+      const result = await runAgentJob(job, 'developer', prompt, {
         budget: String(BUDGETS.task),
         taskId: `fix-${fixCycle}`,
         cwd,
@@ -374,6 +401,7 @@ Instructions:
     const planFile = path.join(getSprintDir(sprintId), 'plan.json');
     const planContent = fs.existsSync(planFile) ? fs.readFileSync(planFile, 'utf-8') : '';
 
+    const agentName = taskDetails.agent || 'developer';
     const result = await runWithRetry(
       job,
       taskId,
@@ -382,7 +410,8 @@ Instructions:
       cwd,
       research,
       planContent,
-      String(BUDGETS.task),
+      String(BUDGETS[agentName === 'tester' ? 'test' : 'task']),
+      agentName,
     );
 
     const commitMessage = `feat(${sprintId}): task ${taskId} - ${taskDetails.title}\n\nSprint: ${sprintId}\nTask: ${taskId}\n\nCo-Authored-By: Claude <noreply@anthropic.com>`;
@@ -469,7 +498,7 @@ async function checkWaveCompletion(sprintId: string, wave: number): Promise<void
   // Find the next wave
   const nextWave = wave + 1;
   const nextWaveTasks = sprint.plan.tasks.filter((t) =>
-    (t.wave || 1) === nextWave && (t.agent === 'implementer' || (!t.agent && t.assigned_to))
+    (t.wave || 1) === nextWave && t.assigned_to
   );
 
   const conflictResolver = createConflictResolver(sprintId);

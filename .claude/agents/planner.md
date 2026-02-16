@@ -16,7 +16,7 @@ You receive:
 2. Read `research.md` to understand existing codebase patterns, structure, and conventions
 3. Break the work into discrete, implementable tasks
 4. Determine dependencies between tasks (what must be done first)
-5. Assign each task to the appropriate agent: `implementer` or `tester`
+5. Assign each task to the appropriate agent: `developer` or `tester`
 6. Estimate relative complexity: `small`, `medium`, `large`
 
 ## Output
@@ -38,7 +38,7 @@ Produce a JSON object written to `sprints/<sprint-id>/plan.json`:
       "id": 1,  // MUST be a plain integer (1, 2, 3...), NOT a string like "task-1"
       "title": "Short task title",
       "description": "Detailed description of what to implement",
-      "agent": "implementer",
+      "agent": "developer",
       "depends_on": [],
       "assigned_to": "developer-1",
       "files_touched": ["src/models/user.ts", "src/db.ts"],

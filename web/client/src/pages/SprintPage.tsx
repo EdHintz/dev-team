@@ -427,7 +427,7 @@ function EstimateLine({ estimates, costs, status, approvedAt }: { estimates: Pla
                   <div className="space-y-1.5">
                     {agentEntries.map(([agent, seconds]) => (
                       <div key={agent} className="flex justify-between text-xs gap-4">
-                        <span className="text-gray-400 capitalize">{agent.replace('implementer', 'developer')}</span>
+                        <span className="text-gray-400 capitalize">{agent}</span>
                         <span className="text-gray-500 tabular-nums">{formatDuration(seconds)}</span>
                       </div>
                     ))}

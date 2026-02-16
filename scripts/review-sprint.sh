@@ -132,7 +132,7 @@ EOF
     fi
 
     echo ""
-    info "Running implementer to fix review issues..."
+    info "Running developer to fix review issues..."
 
     fix_prompt="$(cat <<EOF
 The code reviewer found issues in sprint ${sprint_id}. Fix them.
@@ -149,7 +149,7 @@ ${review_output}
 EOF
 )"
 
-    run_agent "implementer" "$fix_prompt" \
+    run_agent "developer" "$fix_prompt" \
       --budget "$DEFAULT_TASK_BUDGET" \
       --sprint "$sprint_id" \
       --task "fix-${fix_cycle}" \

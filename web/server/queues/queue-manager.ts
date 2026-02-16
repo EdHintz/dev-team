@@ -174,11 +174,8 @@ export async function enqueueImplementation(sprintId: string): Promise<void> {
   const sprint = getSprintOrThrow(sprintId);
   if (!sprint.plan) throw new Error('No plan found for sprint');
 
-  // Filter to implementer tasks — handle plans that omit the 'agent' field
-  // If agent is set, use it; otherwise treat all tasks with assigned_to as implementer tasks
-  const tasks = sprint.plan.tasks.filter((t) =>
-    t.agent === 'implementer' || (!t.agent && t.assigned_to)
-  );
+  // Filter to developer-assigned tasks — any task with assigned_to should be enqueued
+  const tasks = sprint.plan.tasks.filter((t) => t.assigned_to);
 
   // Group tasks by wave
   const waves = new Map<number, typeof tasks>();
@@ -214,7 +211,7 @@ export async function enqueueNextWave(sprintId: string, wave: number): Promise<n
   if (!sprint.plan) return 0;
 
   const tasks = sprint.plan.tasks.filter((t) =>
-    t.wave === wave && (t.agent === 'implementer' || (!t.agent && t.assigned_to))
+    t.wave === wave && t.assigned_to
   );
 
   for (const task of tasks) {
@@ -321,7 +318,7 @@ export function getImplementationQueue(developerId: string): Queue | undefined {
 
 export async function enqueueSubtask(
   sprintId: string,
-  task: { id: number; title: string; description: string; assigned_to?: string; [key: string]: unknown },
+  task: { id: number; title: string; description: string; assigned_to?: string },
   developerId: string,
 ): Promise<void> {
   const sprint = getSprintOrThrow(sprintId);
