@@ -14,7 +14,7 @@ get_model_for_agent() {
   case "$agent" in
     planner)     echo "$PLANNER_MODEL" ;;
     researcher)  echo "$RESEARCHER_MODEL" ;;
-    implementer) echo "$IMPLEMENTER_MODEL" ;;
+    developer)   echo "$DEVELOPER_MODEL" ;;
     reviewer)    echo "$REVIEWER_MODEL" ;;
     tester)      echo "$TESTER_MODEL" ;;
     *)           echo "sonnet" ;;

@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <!-- Atlas: Strong, sturdy robot — wide shoulders, square jaw, steady eyes -->
+  <!-- Antenna -->
+  <line x1="32" y1="4" x2="32" y2="12" stroke="#60a5fa" stroke-width="2.5" stroke-linecap="round"/>
+  <circle cx="32" cy="3" r="2.5" fill="#93c5fd"/>
+  <!-- Head -->
+  <rect x="18" y="12" width="28" height="18" rx="4" fill="#3b82f6"/>
+  <!-- Eyes — steady rectangular visor -->
+  <rect x="22" y="18" width="8" height="5" rx="1.5" fill="#dbeafe"/>
+  <rect x="34" y="18" width="8" height="5" rx="1.5" fill="#dbeafe"/>
+  <rect x="24" y="19" width="3" height="3" rx="0.5" fill="#1e3a5f"/>
+  <rect x="37" y="19" width="3" height="3" rx="0.5" fill="#1e3a5f"/>
+  <!-- Mouth — firm line -->
+  <rect x="26" y="25" width="12" height="2" rx="1" fill="#1e3a5f"/>
+  <!-- Body — wide, strong torso -->
+  <rect x="14" y="32" width="36" height="22" rx="4" fill="#2563eb"/>
+  <!-- Chest plate -->
+  <rect x="24" y="36" width="16" height="8" rx="2" fill="#3b82f6"/>
+  <rect x="28" y="38" width="8" height="4" rx="1" fill="#60a5fa"/>
+  <!-- Arms — thick -->
+  <rect x="6" y="34" width="7" height="16" rx="3.5" fill="#3b82f6"/>
+  <rect x="51" y="34" width="7" height="16" rx="3.5" fill="#3b82f6"/>
+  <!-- Legs -->
+  <rect x="20" y="54" width="9" height="8" rx="2" fill="#2563eb"/>
+  <rect x="35" y="54" width="9" height="8" rx="2" fill="#2563eb"/>
+</svg>

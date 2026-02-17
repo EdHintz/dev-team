@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- All three robots scaled up to fill the canvas -->
+  <g transform="translate(-4, -6) scale(1.15)">
+
+    <!-- Left robot (blue) -->
+    <g transform="translate(5, 22) scale(0.6)">
+      <line x1="12" y1="2" x2="12" y2="8" stroke="#60a5fa" stroke-width="2.5" stroke-linecap="round"/>
+      <circle cx="12" cy="1" r="2.5" fill="#93c5fd"/>
+      <rect x="3" y="8" width="18" height="15" rx="4" fill="#3b82f6"/>
+      <circle cx="8.5" cy="15" r="2.5" fill="#fff"/>
+      <circle cx="15.5" cy="15" r="2.5" fill="#fff"/>
+      <rect x="1" y="25" width="22" height="16" rx="3" fill="#2563eb"/>
+      <rect x="-3" y="27" width="4" height="10" rx="2" fill="#3b82f6"/>
+      <rect x="23" y="27" width="4" height="10" rx="2" fill="#3b82f6"/>
+    </g>
+
+    <!-- Right robot (purple) -->
+    <g transform="translate(40, 22) scale(0.6)">
+      <line x1="12" y1="2" x2="12" y2="8" stroke="#a78bfa" stroke-width="2.5" stroke-linecap="round"/>
+      <circle cx="12" cy="1" r="2.5" fill="#c4b5fd"/>
+      <rect x="3" y="8" width="18" height="15" rx="4" fill="#8b5cf6"/>
+      <circle cx="8.5" cy="15" r="2.5" fill="#fff"/>
+      <circle cx="15.5" cy="15" r="2.5" fill="#fff"/>
+      <rect x="1" y="25" width="22" height="16" rx="3" fill="#7c3aed"/>
+      <rect x="-3" y="27" width="4" height="10" rx="2" fill="#8b5cf6"/>
+      <rect x="23" y="27" width="4" height="10" rx="2" fill="#8b5cf6"/>
+    </g>
+
+    <!-- Center robot (green, larger, in front) -->
+    <g transform="translate(17, 12) scale(0.8)">
+      <line x1="17" y1="0" x2="17" y2="8" stroke="#4ade80" stroke-width="3" stroke-linecap="round"/>
+      <circle cx="17" cy="0" r="3" fill="#86efac"/>
+      <rect x="4" y="8" width="26" height="19" rx="5" fill="#22c55e"/>
+      <circle cx="12" cy="17" r="3.5" fill="#fff"/>
+      <circle cx="22" cy="17" r="3.5" fill="#fff"/>
+      <circle cx="12" cy="17" r="1.5" fill="#064e3b"/>
+      <circle cx="22" cy="17" r="1.5" fill="#064e3b"/>
+      <rect x="10" y="22" width="14" height="2" rx="1" fill="#064e3b"/>
+      <rect x="2" y="29" width="30" height="22" rx="4" fill="#16a34a"/>
+      <rect x="12" y="34" width="10" height="6" rx="2" fill="#4ade80"/>
+      <rect x="-3" y="31" width="5" height="14" rx="2.5" fill="#22c55e"/>
+      <rect x="32" y="31" width="5" height="14" rx="2.5" fill="#22c55e"/>
+    </g>
+
+  </g>
+</svg>

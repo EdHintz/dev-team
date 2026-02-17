@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <!-- Nova: Sleek, futuristic robot — pointed antenna, glowing eyes, slim body -->
+  <!-- Double antenna -->
+  <line x1="26" y1="6" x2="28" y2="14" stroke="#a78bfa" stroke-width="2" stroke-linecap="round"/>
+  <line x1="38" y1="6" x2="36" y2="14" stroke="#a78bfa" stroke-width="2" stroke-linecap="round"/>
+  <circle cx="26" cy="5" r="2" fill="#c4b5fd"/>
+  <circle cx="38" cy="5" r="2" fill="#c4b5fd"/>
+  <!-- Head — rounded, sleek -->
+  <rect x="19" y="13" width="26" height="16" rx="8" fill="#8b5cf6"/>
+  <!-- Eyes — glowing ovals -->
+  <ellipse cx="27" cy="20" rx="4" ry="3" fill="#ede9fe"/>
+  <ellipse cx="37" cy="20" rx="4" ry="3" fill="#ede9fe"/>
+  <ellipse cx="27" cy="20" rx="2" ry="1.5" fill="#4c1d95"/>
+  <ellipse cx="37" cy="20" rx="2" ry="1.5" fill="#4c1d95"/>
+  <!-- Mouth — small smile -->
+  <path d="M28 25 Q32 28 36 25" stroke="#4c1d95" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+  <!-- Body — slim, elegant -->
+  <rect x="18" y="31" width="28" height="20" rx="5" fill="#7c3aed"/>
+  <!-- Chest diamond -->
+  <polygon points="32,34 37,40 32,46 27,40" fill="#a78bfa"/>
+  <polygon points="32,36 35,40 32,44 29,40" fill="#c4b5fd"/>
+  <!-- Arms — thin, graceful -->
+  <rect x="10" y="33" width="6" height="14" rx="3" fill="#8b5cf6"/>
+  <rect x="48" y="33" width="6" height="14" rx="3" fill="#8b5cf6"/>
+  <!-- Legs -->
+  <rect x="22" y="51" width="7" height="10" rx="2" fill="#7c3aed"/>
+  <rect x="35" y="51" width="7" height="10" rx="2" fill="#7c3aed"/>
+</svg>

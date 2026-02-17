@@ -16,7 +16,26 @@
       "Bash(get_sprint_tasks_ordered:*)",
       "Bash(python3:*)",
       "Bash(grep:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "mcp__plugin_claude-mem_mcp-search__search",
+      "Bash(brew list:*)",
+      "Bash(brew services:*)",
+      "Bash(node -e:*)",
+      "Bash(npx tsc:*)",
+      "Bash(curl:*)",
+      "Bash(kill:*)",
+      "Bash(ps:*)",
+      "Bash(git commit:*)",
+      "Bash(lsof:*)",
+      "Bash(./node_modules/.bin/tsc:*)",
+      "Bash(netstat:*)",
+      "Bash(ss:*)",
+      "Bash(env:*)",
+      "Bash(CLAUDECODE= claude --help)",
+      "Bash(npm install:*)",
+      "Bash(npm view:*)",
+      "Bash(timeout 8 npx tsx:*)",
+      "Bash(npx tsx:*)"
     ]
   }
 }
