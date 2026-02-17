@@ -6,8 +6,9 @@ import path from 'node:path';
 import { getRedisConnection } from '../utils/redis.js';
 import { BUDGETS, MAX_FIX_CYCLES } from '../config.js';
 import { runAgentJob } from './base-worker.js';
-import { setSprintStatus, getSprintDir, sprintNeedsApproval } from '../services/state-service.js';
-import { enqueuePrCreation, enqueueFixCycle } from '../queues/queue-manager.js';
+import { setSprintStatus, setReviewCycle, getSprintDir, getSprintOrThrow, sprintNeedsApproval, addBugTasks } from '../services/state-service.js';
+import { enqueuePrCreation, enqueueSubtask } from '../queues/queue-manager.js';
+import { setupSprintGit } from '../services/git-service.js';
 import { requestApproval } from '../services/approval-gate.js';
 import { broadcast } from '../websocket/ws-server.js';
 import { createLogger } from '../utils/logger.js';
@@ -28,7 +29,7 @@ interface ReviewJobData {
 }
 
 /** Parse review markdown into structured findings. */
-function parseFindings(sprintId: string, cycle: number): ReviewFinding[] {
+export function parseFindings(sprintId: string, cycle: number): ReviewFinding[] {
   const reviewFile = path.join(getSprintDir(sprintId), `review-${cycle}.md`);
   if (!fs.existsSync(reviewFile)) return [];
 
@@ -81,26 +82,6 @@ function parseFindings(sprintId: string, cycle: number): ReviewFinding[] {
   return findings;
 }
 
-/** Build a text summary of selected findings for the fix agent prompt. */
-function buildFindingsText(findings: ReviewFinding[]): string {
-  const grouped: Record<string, ReviewFinding[]> = {};
-  for (const f of findings) {
-    (grouped[f.category] ||= []).push(f);
-  }
-
-  const lines: string[] = [];
-  for (const category of ['must-fix', 'should-fix', 'nitpick'] as const) {
-    const items = grouped[category];
-    if (!items?.length) continue;
-    lines.push(`### ${category.toUpperCase()}`);
-    for (const item of items) {
-      lines.push(`- [ ] **${item.location}** — ${item.description}`);
-    }
-    lines.push('');
-  }
-  return lines.join('\n');
-}
-
 /** Fallback: parse verdict from text when JSON verdict file is missing or malformed */
 function fallbackTextParsing(output: string, sprintId: string, cycle: number): boolean {
   const reviewFile = path.join(getSprintDir(sprintId), `review-${cycle}.md`);
@@ -115,6 +96,45 @@ function fallbackTextParsing(output: string, sprintId: string, cycle: number): b
   return approved;
 }
 
+/**
+ * Create bug tasks from review findings and enqueue them for developers.
+ * Re-sets up worktrees (cleaned up after finalizeImplementation) and
+ * transitions the sprint back to running.
+ */
+async function enqueueBugTasks(sprintId: string, cycle: number, findings: ReviewFinding[]): Promise<void> {
+  const bugTasks = addBugTasks(sprintId, cycle, findings);
+  const sprint = getSprintOrThrow(sprintId);
+
+  // Re-setup worktrees (they were cleaned up after finalizeImplementation)
+  const developers = sprint.developers.map((d) => ({ id: d.id, name: d.name }));
+  const worktreePaths = await setupSprintGit(sprint.targetDir, sprintId, developers);
+  for (const [devId, wtPath] of worktreePaths) {
+    sprint.worktreePaths.set(devId, wtPath);
+  }
+
+  // Set sprint back to running
+  setSprintStatus(sprintId, 'running');
+  broadcast({ type: 'sprint:status', sprintId, status: 'running' });
+
+  // Broadcast new task states
+  for (const task of bugTasks) {
+    broadcast({
+      type: 'task:status',
+      sprintId,
+      taskId: task.id,
+      status: 'pending',
+      developerId: task.assigned_to,
+    });
+  }
+
+  // Enqueue each bug task to its assigned developer's queue
+  for (const task of bugTasks) {
+    await enqueueSubtask(sprintId, task, task.assigned_to || 'developer-1');
+  }
+
+  log.info(`Created and enqueued ${bugTasks.length} bug tasks for review cycle ${cycle} in ${sprintId}`);
+}
+
 export function startReviewWorker(): Worker {
   const connection = getRedisConnection();
 
@@ -122,6 +142,7 @@ export function startReviewWorker(): Worker {
     const { sprintId, cycle, targetDir } = job.data;
     log.info(`Starting review cycle ${cycle} for ${sprintId}`);
 
+    setReviewCycle(sprintId, cycle);
     broadcast({ type: 'review:update', sprintId, cycle, status: 'reviewing' });
 
     const researchFile = path.join(getSprintDir(sprintId), 'research.md');
@@ -234,12 +255,18 @@ Rules for the verdict:
         const selectedFindings = selectedIds
           ? findings.filter(f => selectedIds.includes(f.id))
           : findings;
-        const filteredText = buildFindingsText(selectedFindings);
         log.info(`Fix cycle approved with ${selectedFindings.length}/${findings.length} findings selected`);
-        await enqueueFixCycle(sprintId, cycle, filteredText || result.output);
+        await enqueueBugTasks(sprintId, cycle, selectedFindings);
       } else {
-        log.info(`Review cycle ${cycle} needs fixes, enqueuing fix job`);
-        await enqueueFixCycle(sprintId, cycle, result.output);
+        // No approval needed or no structured findings — create bug tasks from raw output
+        const rawFindings = findings.length > 0 ? findings : [{
+          id: 'raw-0',
+          category: 'must-fix' as const,
+          location: 'review output',
+          description: result.output.slice(0, 500),
+        }];
+        log.info(`Review cycle ${cycle} needs fixes, creating ${rawFindings.length} bug tasks`);
+        await enqueueBugTasks(sprintId, cycle, rawFindings);
       }
     } else {
       broadcast({ type: 'review:update', sprintId, cycle, status: 'max-cycles-reached' });

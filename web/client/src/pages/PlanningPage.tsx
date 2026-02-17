@@ -125,6 +125,18 @@ export function PlanningPage() {
                       <div className="text-sm font-medium text-gray-300">{est.human_team}</div>
                     </div>
                   </div>
+                  {est.ai_team_minutes > 0 && est.human_team_minutes > 0 && (
+                    <>
+                      <div className="border-l border-gray-700" />
+                      <div className="flex items-center gap-2">
+                        <span className="text-lg">&#x26A1;</span>
+                        <div>
+                          <div className="text-xs text-gray-500">Speedup</div>
+                          <div className="text-sm font-medium text-blue-300">{Math.round(est.human_team_minutes / est.ai_team_minutes)}x faster</div>
+                        </div>
+                      </div>
+                    </>
+                  )}
                 </div>
               );
             })()}

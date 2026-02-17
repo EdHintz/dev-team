@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { SPECS_DIR, generateSprintId } from '../config.js';
 import { listApps, getApp, createApp, deleteApp, reorderApps, getAppSprintsDir, getAppSpecsDir } from '../services/app-service.js';
-import { listSprints, initSprint, setSprintStatus } from '../services/state-service.js';
+import { listSprints, initSprint, setSprintStatus, registerAppRootFolder } from '../services/state-service.js';
 import { broadcast } from '../websocket/ws-server.js';
 import type { AppWithSprints } from '../../shared/types.js';
 
@@ -47,6 +47,7 @@ appRoutes.post('/', (req, res) => {
 
   try {
     const app = createApp(name, rootFolder);
+    registerAppRootFolder(rootFolder);
     res.status(201).json(app);
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to create app';
@@ -125,6 +126,7 @@ appRoutes.post('/with-sprint', async (req, res) => {
   if (!app) {
     try {
       app = createApp(name, rootFolder);
+      registerAppRootFolder(rootFolder);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to create app';
       res.status(400).json({ error: message });

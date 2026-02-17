@@ -59,7 +59,9 @@ Distribution guidelines:
 
 IMPORTANT: Include an "estimates" object in the plan JSON with:
 - "ai_team": estimated wall-clock time for this AI dev team to complete the sprint (e.g. "~25 minutes"). Consider each task takes roughly 3-8 min by complexity (small ~3min, medium ~5min, large ~8min), and same-wave tasks run in parallel.
+- "ai_team_minutes": numeric version of ai_team in minutes (e.g. 25)
 - "human_team": estimated time for ${developerCount} human developer(s) to implement the same spec (e.g. "~3-4 days"). Use realistic professional estimates including code review and testing.
+- "human_team_minutes": numeric version of human_team in minutes. IMPORTANT: 1 work day = 8 hours = 480 minutes (not 24 hours).
 
 Write the plan to: ${path.join(getSprintDir(sprintId), 'plan.json')}`;
 

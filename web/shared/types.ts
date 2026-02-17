@@ -30,6 +30,7 @@ export interface Task {
   id: number;
   title: string;
   description: string;
+  type?: 'feature' | 'bug';
   agent?: 'developer' | 'tester';
   depends_on: number[];
   complexity?: 'small' | 'medium' | 'large';
@@ -38,6 +39,7 @@ export interface Task {
   assigned_to?: string;
   files_touched?: string[];
   wave?: number;
+  reviewCycle?: number;
 }
 
 export interface PlanEstimates {
@@ -109,6 +111,7 @@ export interface SprintDetail extends SprintSummary {
   tasks: TaskState[];
   developers: DeveloperIdentity[];
   currentWave: number;
+  reviewCycle: number;
   costs: CostData;
   roleLogs?: Record<string, string[]>;
   prUrl?: string;

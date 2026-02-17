@@ -25,7 +25,8 @@ export function TaskList({ tasks, taskStates, developerColors = {}, developerNam
       {tasks.map((task) => {
         const state = stateMap.get(task.id);
         const status = state?.status || 'pending';
-        const color = task.assigned_to ? developerColors[task.assigned_to] : undefined;
+        const isBug = task.type === 'bug';
+        const color = isBug ? '#EF4444' : (task.assigned_to ? developerColors[task.assigned_to] : undefined);
         const isExpanded = expandedId === task.id;
 
         return (
@@ -44,6 +45,9 @@ export function TaskList({ tasks, taskStates, developerColors = {}, developerNam
                 <path fillRule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clipRule="evenodd" />
               </svg>
               <span className="text-xs text-gray-600 shrink-0">#{task.id}</span>
+              {isBug && (
+                <span className="text-xs px-1.5 py-0.5 rounded bg-red-900 text-red-300 font-medium">bug</span>
+              )}
               <TaskStatusBadge status={status} />
               {task.wave && (
                 <span className="text-xs text-gray-600">Wave {task.wave}</span>
@@ -87,6 +91,12 @@ export function TaskList({ tasks, taskStates, developerColors = {}, developerNam
                     <div className="text-gray-300">
                       Depends on: {task.depends_on.map((id) => `#${id}`).join(', ')}
                     </div>
+                  </div>
+                )}
+                {isBug && task.reviewCycle !== undefined && (
+                  <div>
+                    <div className="text-xs text-gray-500 mb-1">Review Cycle</div>
+                    <div className="text-gray-300">From review cycle {task.reviewCycle}</div>
                   </div>
                 )}
                 <div className="flex items-center gap-2 flex-wrap">

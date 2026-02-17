@@ -49,6 +49,16 @@ export function registerAppRootFolders(folders: string[]): void {
   appRootFolders = folders;
 }
 
+/**
+ * Register a single app root folder for sprint discovery.
+ * Called when a new app is created after server boot.
+ */
+export function registerAppRootFolder(folder: string): void {
+  if (!appRootFolders.includes(folder)) {
+    appRootFolders.push(folder);
+  }
+}
+
 export interface SprintState {
   id: string;
   name?: string;
@@ -57,6 +67,7 @@ export interface SprintState {
   tasks: Map<number, TaskState>;
   developers: DeveloperIdentity[];
   currentWave: number;
+  reviewCycle: number;
   worktreePaths: Map<string, string>;
   pendingApprovals: Map<string, PendingApproval>;
   costs: CostData;
@@ -110,6 +121,7 @@ export function initSprint(
     tasks: new Map(),
     developers,
     currentWave: 0,
+    reviewCycle: 0,
     worktreePaths: new Map(),
     pendingApprovals: new Map(),
     costs: { total: 0, by_agent: {}, by_task: {}, sessions: [] },
@@ -180,6 +192,7 @@ export function getOrHydrateSprint(sprintId: string): SprintState | undefined {
     tasks,
     developers,
     currentWave: 0,
+    reviewCycle: 0,
     worktreePaths: new Map(),
     pendingApprovals: new Map(),
     costs,
@@ -259,6 +272,7 @@ export function getSprintDetail(sprintId: string): SprintDetail {
       tasks: Array.from(state.tasks.values()),
       developers: state.developers,
       currentWave: state.currentWave,
+      reviewCycle: state.reviewCycle,
       costs: state.costs,
       roleLogs,
       prUrl,
@@ -302,6 +316,11 @@ export function setSprintStatus(sprintId: string, status: SprintStatus): void {
   sprint.status = status;
   writeStatus(sprintId, status);
   log.info(`Sprint ${sprintId} status: ${status}`);
+}
+
+export function setReviewCycle(sprintId: string, cycle: number): void {
+  const sprint = getSprintOrThrow(sprintId);
+  sprint.reviewCycle = cycle;
 }
 
 export function setSprintApprovedAt(sprintId: string): void {
@@ -524,6 +543,61 @@ export function addSubtasks(sprintId: string, parentTaskId: number, subtasks: Om
   return newTasks;
 }
 
+// --- Bug Task Injection ---
+
+/**
+ * Create individual bug tasks from review findings.
+ * Each finding becomes its own tracked task, round-robin assigned to available developers.
+ */
+export function addBugTasks(
+  sprintId: string,
+  reviewCycle: number,
+  findings: { id: string; category: string; location: string; description: string }[],
+): Task[] {
+  const sprint = getSprintOrThrow(sprintId);
+  if (!sprint.plan) throw new Error(`No plan found for sprint ${sprintId}`);
+
+  const maxId = Math.max(...sprint.plan.tasks.map((t) => t.id), 0);
+  const developerIds = sprint.developers.map((d) => d.id);
+  const newTasks: Task[] = [];
+
+  for (let i = 0; i < findings.length; i++) {
+    const finding = findings[i];
+    const newId = maxId + 1 + i;
+    const developerId = developerIds[i % developerIds.length];
+
+    const task: Task = {
+      id: newId,
+      title: `Fix: ${finding.description.slice(0, 80)}`,
+      description: `**${finding.category.toUpperCase()}** at ${finding.location}\n\n${finding.description}`,
+      type: 'bug',
+      reviewCycle,
+      agent: 'developer',
+      depends_on: [],
+      labels: ['bug', finding.category],
+      assigned_to: developerId,
+    };
+
+    sprint.plan.tasks.push(task);
+    sprint.tasks.set(newId, {
+      taskId: newId,
+      status: 'pending',
+      developerId,
+    });
+    newTasks.push(task);
+  }
+
+  // Persist updated plan to disk
+  const planFile = path.join(getSprintDir(sprintId), 'plan.json');
+  fs.writeFileSync(planFile, JSON.stringify(sprint.plan, null, 2));
+
+  log.info(`Added ${newTasks.length} bug tasks for review cycle ${reviewCycle} in sprint ${sprintId}`, {
+    newIds: newTasks.map((t) => t.id),
+  });
+
+  return newTasks;
+}
+
 // --- Restart / Retry ---
 
 export function resetTaskStatus(sprintId: string, taskId: number): void {
@@ -630,6 +704,7 @@ export function loadSprintFromDisk(sprintId: string, targetDir?: string): Sprint
     tasks: new Map(),
     developers: DEVELOPER_POOL.slice(0, plan?.developer_count || meta?.developerCount || DEFAULT_DEVELOPER_COUNT).map((i) => ({ ...i })),
     currentWave: 0,
+    reviewCycle: 0,
     worktreePaths: new Map(),
     pendingApprovals: new Map(),
     costs,
@@ -762,6 +837,7 @@ function loadSprintDetailFromDisk(sprintId: string): SprintDetail {
     tasks,
     developers,
     currentWave: 0,
+    reviewCycle: 0,
     costs,
     autonomyMode: meta?.autonomyMode,
   };

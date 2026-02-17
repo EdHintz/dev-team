@@ -111,6 +111,13 @@ export function SprintPage() {
     setLogsInitialized(true);
   }, [sprint?.roleLogs, logsInitialized]);
 
+  // Sync review cycle from fetched sprint data (survives page refresh / reconnect)
+  useEffect(() => {
+    if (sprint?.reviewCycle && sprint.reviewCycle > reviewCycle) {
+      setReviewCycle(sprint.reviewCycle);
+    }
+  }, [sprint?.reviewCycle]);
+
   const handlePause = async () => {
     if (!id) return;
     setActionInProgress(true);
@@ -233,7 +240,7 @@ export function SprintPage() {
             {actionInProgress ? 'Resuming...' : 'Resume'}
           </button>
         )}
-        {(sprint.status === 'pr-created' || sprint.status === 'reviewing' || sprint.status === 'completed') && (
+        {(sprint.status === 'pr-created' || sprint.status === 'reviewing') && (
           <button
             onClick={() => navigate(`/sprint/${id}/review`)}
             className="px-3 py-1 bg-purple-600 text-white rounded text-sm hover:bg-purple-500"
@@ -414,6 +421,14 @@ function EstimateLine({ estimates, costs, status, approvedAt }: { estimates: Pla
           <span className="text-gray-500">&#x1F465;</span>{' '}
           <span className="text-gray-400">{estimates.human_team}</span>
         </span>
+        {estimates.ai_team_minutes > 0 && estimates.human_team_minutes > 0 && (
+          <>
+            <span className="text-gray-600">|</span>
+            <span className="text-blue-300 font-medium">
+              {Math.round(estimates.human_team_minutes / estimates.ai_team_minutes)}x faster
+            </span>
+          </>
+        )}
       </div>
       {(actualSeconds > 0 || active) && (
         <div className="relative flex items-center gap-x-2">

@@ -57,6 +57,8 @@ export async function runAgent(options: RunAgentOptions): Promise<AgentResult> {
   // Build command args
   const args = [
     '--print',
+    '--verbose',
+    '--output-format', 'stream-json',
     '--model', model,
     '--system-prompt', agentPrompt,
     '--dangerously-skip-permissions',
@@ -88,18 +90,37 @@ export async function runAgent(options: RunAgentOptions): Promise<AgentResult> {
 
     const outputChunks: string[] = [];
     const errorChunks: string[] = [];
+    let lineBuf = '';
+    let hasEmittedText = false;
 
     child.stdout.on('data', (chunk: Buffer) => {
-      const text = chunk.toString();
-      outputChunks.push(text);
+      lineBuf += chunk.toString();
+      const lines = lineBuf.split('\n');
+      lineBuf = lines.pop() || ''; // keep incomplete last line in buffer
 
-      // Stream lines to callback for real-time log viewing
-      if (options.onStdout) {
-        const lines = text.split('\n');
-        for (const line of lines) {
-          if (line.trim()) {
-            options.onStdout(line);
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const event = JSON.parse(line);
+          if (event.type === 'assistant' && Array.isArray(event.message?.content)) {
+            for (const block of event.message.content) {
+              if (block.type === 'text' && block.text) {
+                // Skip whitespace-only blocks before any real content
+                if (!hasEmittedText && !block.text.trim()) continue;
+                hasEmittedText = true;
+                outputChunks.push(block.text);
+                if (options.onStdout) options.onStdout(block.text);
+              } else if (block.type === 'tool_use' && block.name) {
+                if (options.onStdout) options.onStdout(`⚡ ${block.name}`);
+              }
+            }
+          } else if (event.type === 'result' && event.result && outputChunks.length === 0) {
+            outputChunks.push(event.result);
           }
+        } catch {
+          // non-JSON line — pass through as-is
+          outputChunks.push(line);
+          if (options.onStdout) options.onStdout(line);
         }
       }
     });
@@ -125,7 +146,7 @@ export async function runAgent(options: RunAgentOptions): Promise<AgentResult> {
       const endTime = Date.now();
       const durationSeconds = Math.round((endTime - startTime) / 1000);
       const exitCode = code ?? 1;
-      const output = outputChunks.join('');
+      const output = outputChunks.join('\n');
 
       // Write log file
       if (logFile) {

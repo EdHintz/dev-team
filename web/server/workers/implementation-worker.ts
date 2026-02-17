@@ -61,6 +61,23 @@ function buildPrompt(
 ): string {
   const acceptanceCriteria = (taskDetails.acceptance_criteria || []).map((c: string) => `- ${c}`).join('\n');
 
+  // Bug tasks get a focused fix prompt regardless of attempt
+  if (taskDetails.type === 'bug') {
+    return `You are fixing a bug found during code review for sprint ${sprintId}.
+
+Bug: ${taskDetails.title}
+${taskDetails.description}
+
+Working directory: ${cwd}
+
+Instructions:
+1. Read the file(s) mentioned in the bug description
+2. Fix the issue described above
+3. Run tests to verify your fix (npm test)
+4. Stage your changes with git add (but do NOT commit)
+5. Print a brief summary of what you fixed`;
+  }
+
   if (attempt === 1) {
     // Full prompt — current behavior
     return `You are implementing task ${taskId} of sprint ${sprintId}.
@@ -414,7 +431,8 @@ Instructions:
       agentName,
     );
 
-    const commitMessage = `feat(${sprintId}): task ${taskId} - ${taskDetails.title}\n\nSprint: ${sprintId}\nTask: ${taskId}\n\nCo-Authored-By: Claude <noreply@anthropic.com>`;
+    const commitPrefix = taskDetails.type === 'bug' ? 'fix' : 'feat';
+    const commitMessage = `${commitPrefix}(${sprintId}): task ${taskId} - ${taskDetails.title}\n\nSprint: ${sprintId}\nTask: ${taskId}\n\nCo-Authored-By: Claude <noreply@anthropic.com>`;
     await commitInWorktree(cwd, commitMessage);
 
     setTaskStatus(sprintId, taskId, 'completed', developerId);
@@ -423,10 +441,15 @@ Instructions:
     log.info(`${developerId} completed task ${taskId}`);
 
     try {
-      await checkWaveCompletion(sprintId, taskDetails.wave || 1);
-    } catch (waveErr) {
-      log.error(`Wave completion check failed for ${sprintId} wave ${taskDetails.wave || 1}`, { error: String(waveErr) });
-      broadcast({ type: 'error', sprintId, message: `Wave transition failed: ${waveErr instanceof Error ? waveErr.message : String(waveErr)}` });
+      if (taskDetails.type === 'bug' && taskDetails.reviewCycle !== undefined) {
+        await checkBugCycleCompletion(sprintId, taskDetails.reviewCycle);
+      } else {
+        await checkWaveCompletion(sprintId, taskDetails.wave || 1);
+      }
+    } catch (completionErr) {
+      const label = taskDetails.type === 'bug' ? 'Bug cycle' : 'Wave';
+      log.error(`${label} completion check failed for ${sprintId}`, { error: String(completionErr) });
+      broadcast({ type: 'error', sprintId, message: `${label} transition failed: ${completionErr instanceof Error ? completionErr.message : String(completionErr)}` });
     }
 
     return { success: true, duration: result.durationSeconds };
@@ -547,4 +570,39 @@ async function checkWaveCompletion(sprintId: string, wave: number): Promise<void
 
   const { enqueueNextWave } = await import('../queues/queue-manager.js');
   await enqueueNextWave(sprintId, nextWave);
+}
+
+/**
+ * After a bug task completes, check if all bug tasks for the same review cycle are done.
+ * If so, finalize git and trigger the next review cycle.
+ */
+async function checkBugCycleCompletion(sprintId: string, reviewCycle: number): Promise<void> {
+  const sprint = getSprint(sprintId);
+  if (!sprint?.plan) return;
+
+  // Find all bug tasks for this review cycle
+  const cycleBugTasks = sprint.plan.tasks.filter(
+    (t) => t.type === 'bug' && t.reviewCycle === reviewCycle,
+  );
+  const allDone = cycleBugTasks.every((t) => {
+    const state = sprint.tasks.get(t.id);
+    return state?.status === 'completed';
+  });
+
+  if (!allDone) return;
+
+  log.info(`All ${cycleBugTasks.length} bug tasks for review cycle ${reviewCycle} complete in ${sprintId}`);
+
+  const developers = sprint.developers.map((dev) => ({ id: dev.id, name: dev.name }));
+  const conflictResolver = createConflictResolver(sprintId);
+
+  const { finalizeImplementation } = await import('../services/git-service.js');
+  await finalizeImplementation(sprint.targetDir, sprintId, developers, conflictResolver);
+
+  const { setSprintStatus } = await import('../services/state-service.js');
+  setSprintStatus(sprintId, 'reviewing');
+  broadcast({ type: 'sprint:status', sprintId, status: 'reviewing' });
+
+  const { enqueueReview } = await import('../queues/queue-manager.js');
+  await enqueueReview(sprintId, reviewCycle + 1);
 }
