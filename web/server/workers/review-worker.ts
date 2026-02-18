@@ -153,36 +153,17 @@ export function startReviewWorker(): Worker {
     const reviewFilePath = path.join(getSprintDir(sprintId), `review-${cycle}.md`);
     const verdictFilePath = path.join(getSprintDir(sprintId), `review-${cycle}-verdict.json`);
 
-    const prompt = `You are the code reviewer for sprint ${sprintId}, review cycle ${cycle}.
-
-Codebase Research:
-${research}
+    const prompt = `Sprint ID: ${sprintId}
+Review cycle: ${cycle}
+Working directory: ${targetDir}
+Write review to: ${reviewFilePath}
+Write verdict JSON to: ${verdictFilePath}
 
 Sprint Plan:
 ${planContent}
 
-Working directory: ${targetDir}
-
-Instructions:
-1. Review the git diff for this sprint
-2. Run linting and tests
-3. Categorize findings as MUST-FIX, SHOULD-FIX, or NITPICK
-4. Write your markdown review to: ${reviewFilePath}
-5. CRITICAL: You MUST also write a machine-readable verdict JSON file to: ${verdictFilePath}
-
-The verdict JSON file must contain exactly this structure:
-{
-  "verdict": "APPROVE" or "REQUEST_CHANGES",
-  "must_fix_count": <number of MUST-FIX issues>,
-  "should_fix_count": <number of SHOULD-FIX issues>,
-  "nitpick_count": <number of NITPICK issues>,
-  "summary": "<brief one-line summary>"
-}
-
-Rules for the verdict:
-- Use "APPROVE" when there are zero MUST-FIX items and all tests pass
-- Use "REQUEST_CHANGES" when there are MUST-FIX items or tests fail
-- The JSON file is how the system determines the outcome — you MUST write it`;
+Codebase Research:
+${research}`;
 
     const result = await runAgentJob(job, 'reviewer', prompt, {
       budget: String(BUDGETS.review),

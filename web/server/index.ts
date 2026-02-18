@@ -8,6 +8,7 @@ import { checkRedisConnection, closeRedisConnection } from './utils/redis.js';
 import { initWebSocket, closeWebSocket } from './websocket/ws-server.js';
 import { initQueues } from './queues/queue-manager.js';
 import { startAllWorkers, stopAllWorkers } from './workers/worker-manager.js';
+import { startMonitorLoop, stopMonitorLoop } from './services/monitor-service.js';
 import { loadActiveSprintsFromDisk, registerAppRootFolders } from './services/state-service.js';
 import { getAllAppRootFolders } from './services/app-service.js';
 import { createLogger } from './utils/logger.js';
@@ -41,6 +42,9 @@ async function main(): Promise<void> {
     startAllWorkers();
   }
 
+  // Start monitor polling loop (runs independently of Redis)
+  startMonitorLoop();
+
   // Create Express app and HTTP server
   const app = createApp();
   const server = http.createServer(app);
@@ -58,6 +62,7 @@ async function main(): Promise<void> {
   // Graceful shutdown
   const shutdown = async () => {
     log.info('Shutting down...');
+    stopMonitorLoop();
     await stopAllWorkers();
     closeWebSocket();
     server.close();

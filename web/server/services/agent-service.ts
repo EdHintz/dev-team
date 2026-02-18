@@ -107,11 +107,13 @@ export async function runAgent(options: RunAgentOptions): Promise<AgentResult> {
               if (block.type === 'text' && block.text) {
                 // Skip whitespace-only blocks before any real content
                 if (!hasEmittedText && !block.text.trim()) continue;
+                // Trim leading whitespace from the very first text block
+                const text = hasEmittedText ? block.text : block.text.trimStart();
                 hasEmittedText = true;
-                outputChunks.push(block.text);
-                if (options.onStdout) options.onStdout(block.text);
+                outputChunks.push(text);
+                if (options.onStdout) options.onStdout(text);
               } else if (block.type === 'tool_use' && block.name) {
-                if (options.onStdout) options.onStdout(`⚡ ${block.name}`);
+                if (options.onStdout) options.onStdout(`⚡ ${block.name}${summarizeToolInput(block.name, block.input)}`);
               }
             }
           } else if (event.type === 'result' && event.result && outputChunks.length === 0) {
@@ -252,7 +254,48 @@ function extractLastJson<T>(text: string): T | null {
   return null;
 }
 
-function trackCost(sprintId: string, agentName: string, taskId: string, durationSeconds: number): void {
+/** Extract a short summary from a tool_use input to show alongside the tool name in logs. */
+function summarizeToolInput(toolName: string, input: Record<string, unknown> | undefined): string {
+  if (!input) return '';
+  try {
+    switch (toolName) {
+      case 'Read':
+        if (input.file_path) return ` ${basename(String(input.file_path))}`;
+        break;
+      case 'Write':
+        if (input.file_path) return ` ${basename(String(input.file_path))}`;
+        break;
+      case 'Edit':
+        if (input.file_path) return ` ${basename(String(input.file_path))}`;
+        break;
+      case 'Bash':
+        if (input.command) {
+          const cmd = String(input.command).split('\n')[0].slice(0, 80);
+          return ` ${cmd}`;
+        }
+        break;
+      case 'Glob':
+        if (input.pattern) return ` ${input.pattern}`;
+        break;
+      case 'Grep':
+        if (input.pattern) return ` "${input.pattern}"`;
+        break;
+      case 'Task':
+        if (input.description) return ` ${input.description}`;
+        break;
+    }
+  } catch {
+    // best-effort
+  }
+  return '';
+}
+
+function basename(filePath: string): string {
+  const i = filePath.lastIndexOf('/');
+  return i >= 0 ? filePath.slice(i + 1) : filePath;
+}
+
+async function trackCost(sprintId: string, agentName: string, taskId: string, durationSeconds: number): Promise<void> {
   const costFile = path.join(getSprintDir(sprintId), 'cost.json');
 
   try {
@@ -278,6 +321,12 @@ function trackCost(sprintId: string, agentName: string, taskId: string, duration
     }
 
     fs.writeFileSync(costFile, JSON.stringify(costs, null, 2));
+
+    // Refresh in-memory state and broadcast to clients
+    const { updateCosts } = await import('./state-service.js');
+    const updated = updateCosts(sprintId);
+    const { broadcast } = await import('../websocket/ws-server.js');
+    broadcast({ type: 'cost:update', sprintId, costs: updated });
   } catch {
     log.warn('Could not update cost tracker', { costFile });
   }

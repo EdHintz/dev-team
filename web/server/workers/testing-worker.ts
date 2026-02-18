@@ -29,27 +29,14 @@ export function startTestingWorker(): Worker {
     const planFile = path.join(getSprintDir(sprintId), 'plan.json');
     const planContent = fs.existsSync(planFile) ? fs.readFileSync(planFile, 'utf-8') : '';
 
-    const prompt = `You are the integration tester for sprint ${sprintId}.
+    const prompt = `Sprint ID: ${sprintId}
+Working directory: ${targetDir}
 
-Multiple developers worked on this sprint in parallel — their code has been merged. Your job is to verify everything works together.
-
-Sprint Plan (shows which tasks were assigned to which developers):
+Sprint Plan:
 ${planContent}
 
 Codebase Research:
-${research}
-
-Working directory: ${targetDir}
-
-Instructions:
-1. Run the existing test suite first: npm test. Report any failures — these likely indicate merge incompatibilities between developers' work.
-2. Read the plan to identify tasks from different developers that touch related areas (shared modules, APIs one produces and another consumes, shared types).
-3. Write a small number of targeted integration tests (3-8) covering those cross-task boundaries. Do NOT write unit tests — developers already handle those.
-4. Run the full test suite again: npm test
-5. Stage your test files with git add (but do NOT commit)
-6. Print a summary of which integration points you tested and the results
-
-If there was only one developer, just run the existing test suite and report results — skip writing new tests unless you see untested cross-module interactions.`;
+${research}`;
 
     const result = await runAgentJob(job, 'tester', prompt, {
       budget: String(BUDGETS.test),

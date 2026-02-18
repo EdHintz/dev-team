@@ -160,6 +160,7 @@ function NewAppForm({ onCreated, onCancel }: { onCreated: () => void; onCancel: 
           {showSpecBrowser && (
             <div className="mt-2">
               <FileBrowser
+                startDir="/Users/edhintz/Downloads"
                 filter=".md"
                 selectFiles
                 onSelect={(p) => { setSpecPath(p); setShowSpecBrowser(false); }}
@@ -285,6 +286,7 @@ function NewSprintForm({ app, onCreated, onCancel }: { app: AppWithSprints; onCr
           {showSpecBrowser && (
             <div className="mt-2">
               <FileBrowser
+                startDir="/Users/edhintz/Downloads"
                 filter=".md"
                 selectFiles
                 onSelect={(p) => { setSpecPath(p); setShowSpecBrowser(false); }}

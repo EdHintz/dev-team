@@ -234,28 +234,30 @@ export async function enqueueNextWave(sprintId: string, wave: number): Promise<n
   return tasks.length;
 }
 
-export async function enqueueTesting(sprintId: string): Promise<void> {
+export async function enqueueTesting(sprintId: string, retry = false): Promise<void> {
   const sprint = getSprintOrThrow(sprintId);
+  const suffix = retry ? `-retry-${Date.now()}` : '';
 
   await testingQueue.add('test', {
     sprintId,
     targetDir: sprint.targetDir,
   }, {
-    jobId: `test-${sprintId}`,
+    jobId: `test-${sprintId}${suffix}`,
   });
 
   log.info(`Enqueued testing job for ${sprintId}`);
 }
 
-export async function enqueueReview(sprintId: string, cycle: number): Promise<void> {
+export async function enqueueReview(sprintId: string, cycle: number, retry = false): Promise<void> {
   const sprint = getSprintOrThrow(sprintId);
+  const suffix = retry ? `-retry-${Date.now()}` : '';
 
   await reviewQueue.add('review', {
     sprintId,
     cycle,
     targetDir: sprint.targetDir,
   }, {
-    jobId: `review-${sprintId}-${cycle}`,
+    jobId: `review-${sprintId}-${cycle}${suffix}`,
   });
 
   log.info(`Enqueued review job for ${sprintId} (cycle ${cycle})`);
@@ -336,6 +338,39 @@ export async function enqueueSubtask(
   });
 
   log.info(`Enqueued subtask ${task.id} for ${developerId} in ${sprintId}`);
+}
+
+// --- Drain Sprint Jobs ---
+
+export async function drainSprintJobs(sprintId: string): Promise<number> {
+  let removed = 0;
+
+  const allQueues: Queue[] = [
+    researchQueue,
+    planningQueue,
+    testingQueue,
+    reviewQueue,
+    prQueue,
+    ...implementationQueues.values(),
+  ];
+
+  for (const queue of allQueues) {
+    // Remove waiting jobs for this sprint
+    const waiting = await queue.getJobs(['waiting', 'delayed', 'prioritized']);
+    for (const job of waiting) {
+      if (job.data?.sprintId === sprintId) {
+        try {
+          await job.remove();
+          removed++;
+        } catch {
+          // Job may have already started — skip
+        }
+      }
+    }
+  }
+
+  log.info(`Drained ${removed} queued jobs for cancelled sprint ${sprintId}`);
+  return removed;
 }
 
 // --- Restart / Retry ---

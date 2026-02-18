@@ -63,24 +63,18 @@ function buildPrompt(
 
   // Bug tasks get a focused fix prompt regardless of attempt
   if (taskDetails.type === 'bug') {
-    return `You are fixing a bug found during code review for sprint ${sprintId}.
-
-Bug: ${taskDetails.title}
-${taskDetails.description}
-
+    return `Sprint ID: ${sprintId}
+Task type: bug fix
 Working directory: ${cwd}
 
-Instructions:
-1. Read the file(s) mentioned in the bug description
-2. Fix the issue described above
-3. Run tests to verify your fix (npm test)
-4. Stage your changes with git add (but do NOT commit)
-5. Print a brief summary of what you fixed`;
+Bug: ${taskDetails.title}
+${taskDetails.description}`;
   }
 
   if (attempt === 1) {
-    // Full prompt — current behavior
-    return `You are implementing task ${taskId} of sprint ${sprintId}.
+    return `Sprint ID: ${sprintId}
+Task ID: ${taskId}
+Working directory: ${cwd}
 
 Task: ${taskDetails.title}
 Description: ${taskDetails.description}
@@ -92,21 +86,14 @@ Codebase Research:
 ${research}
 
 Full Sprint Plan:
-${planContent}
-
-Working directory: ${cwd}
-
-Instructions:
-1. Read research.md for existing patterns and conventions
-2. Implement the changes described in this task
-3. Run tests if applicable (npm test)
-4. Stage your changes with git add (but do NOT commit)
-5. Print a summary of what you implemented`;
+${planContent}`;
   }
 
   if (attempt === 2) {
-    // Simplified — task details only, no research/plan
-    return `You are implementing task ${taskId} of sprint ${sprintId}.
+    // Simplified — task details only, no research/plan (reduces token count for retry)
+    return `Sprint ID: ${sprintId}
+Task ID: ${taskId}
+Working directory: ${cwd}
 
 Task: ${taskDetails.title}
 Description: ${taskDetails.description}
@@ -116,29 +103,22 @@ ${acceptanceCriteria}
 
 Files to modify: ${(taskDetails.files_touched || []).join(', ') || 'See description'}
 
-Working directory: ${cwd}
-
-Keep your implementation focused and your response concise.
-
-Instructions:
-1. Implement the changes described in this task
-2. Run tests if applicable (npm test)
-3. Stage your changes with git add (but do NOT commit)
-4. Print a brief summary of what you implemented`;
+Keep your implementation focused and your response concise.`;
   }
 
-  // Attempt 3 — minimal
-  return `Implement task ${taskId}: ${taskDetails.title}
+  // Attempt 3 — minimal (last resort for token-limited retries)
+  return `Sprint ID: ${sprintId}
+Task ID: ${taskId}
+Working directory: ${cwd}
+
+Implement: ${taskDetails.title}
 
 ${taskDetails.description}
 
 Acceptance Criteria:
 ${acceptanceCriteria}
 
-Working directory: ${cwd}
-
-Implement only the minimum required changes. Keep response under 10000 tokens.
-Stage your changes with git add (do NOT commit).`;
+Implement only the minimum required changes. Keep response under 10000 tokens.`;
 }
 
 /**

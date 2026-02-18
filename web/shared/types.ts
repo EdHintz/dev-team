@@ -89,6 +89,7 @@ export interface SprintSummary {
   developerCount?: number;
   createdAt?: string;
   approvedAt?: string;
+  completedAt?: string;
   targetDir?: string;
   autonomyMode?: AutonomyMode;
 }
@@ -113,6 +114,7 @@ export interface SprintDetail extends SprintSummary {
   currentWave: number;
   reviewCycle: number;
   costs: CostData;
+  approvalWaitSeconds: number;
   roleLogs?: Record<string, string[]>;
   prUrl?: string;
 }
@@ -139,14 +141,36 @@ export type ServerEvent =
   | { type: 'approval:required'; id: string; sprintId: string; message: string; context?: unknown }
   | { type: 'review:update'; sprintId: string; cycle: number; status: string; findings?: unknown }
   | { type: 'cost:update'; sprintId: string; costs: CostData }
-  | { type: 'error'; sprintId: string; message: string; details?: unknown };
+  | { type: 'error'; sprintId: string; message: string; details?: unknown }
+  | { type: 'monitor:message'; sprintId: string; message: MonitorMessage }
+  | { type: 'monitor:typing'; sprintId: string; active: boolean };
 
 export type ClientEvent =
   | { type: 'approval:response'; id: string; approved: boolean; comment?: string; data?: unknown }
   | { type: 'sprint:start'; specPath: string; targetDir: string; developerCount?: number }
   | { type: 'sprint:approve'; sprintId: string }
   | { type: 'sprint:cancel'; sprintId: string }
-  | { type: 'task:retry'; sprintId: string; taskId: number };
+  | { type: 'task:retry'; sprintId: string; taskId: number }
+  | { type: 'monitor:chat'; sprintId: string; content: string };
+
+// --- Monitor ---
+
+export interface MonitorMessage {
+  id: string;
+  role: 'monitor' | 'user' | 'system';
+  content: string;
+  timestamp: string;
+  action?: MonitorAction;
+  actionResult?: { success: boolean; message: string };
+}
+
+export type MonitorAction =
+  | { type: 'restart_sprint' }
+  | { type: 'retry_task'; taskId: number }
+  | { type: 'git_merge_abort' }
+  | { type: 'clear_stuck_tasks' }
+  | { type: 'pause_sprint' }
+  | { type: 'resume_sprint' };
 
 // --- API Request/Response ---
 

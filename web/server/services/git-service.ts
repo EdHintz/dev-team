@@ -165,30 +165,40 @@ export async function mergeDeveloperBranch(
   const suffix = friendlyName ? friendlyName.toLowerCase() : developerId;
   const devBranch = `sprint/${sprintId}--${suffix}`;
 
+  // Stash any uncommitted changes before checkout/merge
+  let stashed = false;
+  try {
+    const status = await git(['status', '--porcelain'], targetDir);
+    if (status.trim()) {
+      await git(['stash', 'push', '-m', `pre-merge-${devBranch}`], targetDir);
+      stashed = true;
+      log.info(`Stashed uncommitted changes before merge`, { devBranch });
+    }
+  } catch {
+    // If stash fails, continue anyway — merge may still work
+  }
+
   // Ensure we're on the sprint branch
   await git(['checkout', sprintBranch], targetDir);
 
   try {
     await git(['merge', devBranch, '--no-edit'], targetDir);
     log.info(`Merged ${devBranch} into ${sprintBranch}`);
+    if (stashed) {
+      try { await git(['stash', 'pop'], targetDir); } catch { log.warn('Stash pop failed after merge — may need manual cleanup'); }
+    }
     return { success: true };
   } catch (err) {
-    // Check for merge conflicts — execFileAsync puts git output in stderr, not message
-    const message = err instanceof Error ? err.message : '';
-    const stderr = (err as { stderr?: string }).stderr || '';
-    if (
-      message.includes('CONFLICT') || message.includes('Automatic merge failed') ||
-      stderr.includes('CONFLICT') || stderr.includes('Automatic merge failed')
-    ) {
-      const conflicts = await getConflictFiles(targetDir);
+    // Check git state for conflicts instead of parsing error strings
+    // (git writes conflict messages to stdout, not stderr/message)
+    const conflicts = await getConflictFiles(targetDir);
+    if (conflicts.length > 0) {
       log.warn(`Merge conflicts detected`, { devBranch, conflicts });
 
-      // If a resolver is provided, attempt agent-based resolution
-      if (conflictResolver && conflicts.length > 0) {
+      if (conflictResolver) {
         try {
           await conflictResolver(targetDir, conflicts);
 
-          // Verify no remaining conflicts
           const remaining = await getConflictFiles(targetDir);
           if (remaining.length === 0) {
             await git(['commit', '--no-edit'], targetDir);
@@ -197,18 +207,20 @@ export async function mergeDeveloperBranch(
           }
 
           log.warn(`Agent left unresolved conflicts`, { devBranch, remaining });
-          await git(['merge', '--abort'], targetDir);
-          return { success: false, conflicts: remaining };
         } catch (resolveErr) {
           log.error(`Conflict resolver failed`, { devBranch, error: String(resolveErr) });
-          await git(['merge', '--abort'], targetDir);
-          return { success: false, conflicts };
         }
       }
 
-      // No resolver — abort the merge
+      // Resolver not provided, failed, or left conflicts — abort
       await git(['merge', '--abort'], targetDir);
+      if (stashed) {
+        try { await git(['stash', 'pop'], targetDir); } catch { log.warn('Stash pop failed after merge abort'); }
+      }
       return { success: false, conflicts };
+    }
+    if (stashed) {
+      try { await git(['stash', 'pop'], targetDir); } catch { log.warn('Stash pop failed after merge error'); }
     }
     throw err;
   }
@@ -380,6 +392,13 @@ export async function mergeWaveAndReset(
   conflictResolver?: ConflictResolver,
 ): Promise<MergeResult[]> {
   const results: MergeResult[] = [];
+
+  // Recover from any pre-existing failed merge state
+  const preConflicts = await getConflictFiles(targetDir);
+  if (preConflicts.length > 0) {
+    log.warn('Found pre-existing merge conflict state, aborting before proceeding');
+    await git(['merge', '--abort'], targetDir).catch(() => {});
+  }
 
   // Stash any uncommitted changes (e.g. .completed state file) before switching branches
   const sprintBranch = `sprint/${sprintId}`;

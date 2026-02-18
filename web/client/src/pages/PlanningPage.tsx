@@ -12,7 +12,9 @@ export function PlanningPage() {
   const navigate = useNavigate();
   const { sprint, loading, refresh } = useSprintDetail(id);
   const { subscribe } = useWebSocket();
-  const [logLines, setLogLines] = useState<string[]>([]);
+  const [researcherLogs, setResearcherLogs] = useState<string[]>([]);
+  const [plannerLogs, setPlannerLogs] = useState<string[]>([]);
+  const [logsInitialized, setLogsInitialized] = useState(false);
   const [approving, setApproving] = useState(false);
 
   useEffect(() => {
@@ -27,14 +29,30 @@ export function PlanningPage() {
           }
           break;
         case 'task:log':
-          setLogLines((prev) => {
-            if (prev.length > 0 && prev[prev.length - 1] === event.line) return prev;
-            return [...prev.slice(-500), event.line];
-          });
+          if (event.developerId === 'researcher') {
+            setResearcherLogs((prev) => {
+              if (prev.length > 0 && prev[prev.length - 1] === event.line) return prev;
+              return [...prev.slice(-500), event.line];
+            });
+          } else if (event.developerId === 'planner') {
+            setPlannerLogs((prev) => {
+              if (prev.length > 0 && prev[prev.length - 1] === event.line) return prev;
+              return [...prev.slice(-500), event.line];
+            });
+          }
           break;
       }
     });
   }, [id, subscribe, refresh, navigate]);
+
+  // Load persisted role logs once when sprint data arrives
+  useEffect(() => {
+    if (!sprint?.roleLogs || logsInitialized) return;
+    const logs = sprint.roleLogs;
+    if (logs.researcher) setResearcherLogs(logs.researcher);
+    if (logs.planner) setPlannerLogs(logs.planner);
+    setLogsInitialized(true);
+  }, [sprint?.roleLogs, logsInitialized]);
 
   const [approveError, setApproveError] = useState<string | null>(null);
 
@@ -84,15 +102,33 @@ export function PlanningPage() {
         <SprintStatusBadge status={sprint.status} />
       </div>
 
-      {isWaiting && (
-        <div className="mb-6">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
-            <span className="text-blue-300">
-              {sprint.status === 'researching' ? 'Analyzing codebase...' : 'Creating task plan...'}
-            </span>
-          </div>
-          <LogViewer lines={logLines} maxHeight="400px" />
+      {(isWaiting || researcherLogs.length > 0 || plannerLogs.length > 0) && (
+        <div className="mb-6 space-y-4">
+          {(sprint.status === 'researching' || researcherLogs.length > 0) && (
+            <div className="border border-cyan-800 rounded-lg p-4 bg-gray-900">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="w-3 h-3 rounded-full bg-cyan-500" />
+                <h3 className="text-sm font-semibold text-cyan-400">Researcher</h3>
+                {sprint.status === 'researching' && researcherLogs.length > 0 && (
+                  <span className="text-xs text-cyan-600 animate-pulse">Analyzing codebase...</span>
+                )}
+              </div>
+              <LogViewer lines={researcherLogs} maxHeight={sprint.status === 'researching' ? '500px' : '200px'} />
+            </div>
+          )}
+
+          {(sprint.status === 'planning' || plannerLogs.length > 0) && (
+            <div className="border border-indigo-800 rounded-lg p-4 bg-gray-900">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="w-3 h-3 rounded-full bg-indigo-500" />
+                <h3 className="text-sm font-semibold text-indigo-400">Planner</h3>
+                {sprint.status === 'planning' && plannerLogs.length > 0 && (
+                  <span className="text-xs text-indigo-600 animate-pulse">Creating task plan...</span>
+                )}
+              </div>
+              <LogViewer lines={plannerLogs} maxHeight={sprint.status === 'planning' ? '500px' : '200px'} />
+            </div>
+          )}
         </div>
       )}
 

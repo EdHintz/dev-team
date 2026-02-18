@@ -66,9 +66,8 @@ export function App() {
       <div className="min-h-screen">
         <header className="border-b border-gray-800 px-6 py-3 flex items-center gap-4">
           <a href="/" className="text-lg font-bold text-white hover:text-blue-400 transition">
-            Dev Team
+            Agent Dev Team
           </a>
-          <span className="text-xs text-gray-500">v2</span>
           <AppBreadcrumb />
         </header>
         <main className="p-6">

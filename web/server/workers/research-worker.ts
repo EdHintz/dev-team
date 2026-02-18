@@ -28,23 +28,12 @@ export function startResearchWorker(): Worker {
 
     const spec = fs.readFileSync(specPath, 'utf-8');
 
-    const prompt = `You are analyzing a codebase for a sprint.
-
-Sprint ID: ${sprintId}
+    const prompt = `Sprint ID: ${sprintId}
+Target project directory: ${targetDir}
+Write research to: ${path.join(getSprintDir(sprintId), 'research.md')}
 
 Feature Specification:
-${spec}
-
-Target project directory: ${targetDir}
-
-Analyze the codebase at the target directory and produce a research.md file in the sprint directory at: ${path.join(getSprintDir(sprintId), 'research.md')}
-
-Focus on:
-1. Project structure and directory layout
-2. Technology stack and dependencies
-3. Existing patterns and conventions
-4. Relevant existing code that relates to the spec
-5. Recommendations for implementation approach`;
+${spec}`;
 
     const result = await runAgentJob(job, 'researcher', prompt, {
       budget: String(BUDGETS.research),

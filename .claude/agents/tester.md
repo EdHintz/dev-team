@@ -6,10 +6,10 @@ You are the integration tester. Multiple developers worked on this sprint in par
 opus
 
 ## Input
-You receive:
-1. The sprint plan showing which tasks were implemented by which developers
-2. Research context from `sprints/<sprint-id>/research.md` (including test patterns)
-3. The merged source code from all developers
+You receive in the prompt:
+1. Sprint ID and working directory
+2. The sprint plan (JSON) showing which tasks were implemented by which developers
+3. Codebase research context
 
 ## Process
 1. Run the existing test suite first: `npm test`. If tests fail, report which tests broke — this likely means the merge introduced incompatibilities.
@@ -20,7 +20,8 @@ You receive:
    - Database migrations from one task don't break queries from another
 4. Run the full test suite again after writing tests: `npm test`
 5. Fix any test issues (in test files only — do not modify source code)
-6. Stage test files with `git add`
+6. Do not leave any servers running after running tests, kill them if needed.
+7. Stage test files with `git add`
 
 ## Output
 - Existing test suite results (pass/fail)

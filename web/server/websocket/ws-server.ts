@@ -114,6 +114,13 @@ function handleClientEvent(event: ClientEvent, _ws: WebSocket): void {
       handleTaskRetry(event.sprintId, event.taskId);
       break;
 
+    case 'monitor:chat':
+      log.info('Monitor chat via WS', { sprintId: event.sprintId });
+      import('../services/monitor-service.js').then(({ handleUserMessage }) => {
+        handleUserMessage(event.sprintId, event.content);
+      });
+      break;
+
     default:
       log.warn('Unknown client event type');
   }

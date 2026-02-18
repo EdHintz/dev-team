@@ -32,38 +32,16 @@ export function startPlanningWorker(): Worker {
     const researchFile = path.join(getSprintDir(sprintId), 'research.md');
     const research = fs.existsSync(researchFile) ? fs.readFileSync(researchFile, 'utf-8') : '';
 
-    const prompt = `You are planning a sprint.
-
-Sprint ID: ${sprintId}
+    const prompt = `Sprint ID: ${sprintId}
+Number of developers: ${developerCount}
+Target project directory: ${targetDir}
+Write the plan to: ${path.join(getSprintDir(sprintId), 'plan.json')}
 
 Feature Specification:
 ${spec}
 
 Codebase Research:
-${research}
-
-Target project directory: ${targetDir}
-
-Number of developers: ${developerCount}
-
-IMPORTANT: You must distribute tasks across ${developerCount} developers. For each task, include:
-- "assigned_to": which developer should do it ("developer-1", "developer-2", etc.)
-- "files_touched": list of files this task will likely create or modify
-- "wave": execution wave number (tasks in the same wave with different developers run in parallel)
-
-Distribution guidelines:
-- Group tasks by file domain to minimize cross-developer file overlap
-- Tasks in the same wave assigned to different developers MUST NOT touch the same files
-- Minimize cross-developer dependencies (task A on dev-1 depending on task B on dev-2)
-- Wave 1 has tasks with no dependencies; subsequent waves depend on prior waves completing
-
-IMPORTANT: Include an "estimates" object in the plan JSON with:
-- "ai_team": estimated wall-clock time for this AI dev team to complete the sprint (e.g. "~25 minutes"). Consider each task takes roughly 3-8 min by complexity (small ~3min, medium ~5min, large ~8min), and same-wave tasks run in parallel.
-- "ai_team_minutes": numeric version of ai_team in minutes (e.g. 25)
-- "human_team": estimated time for ${developerCount} human developer(s) to implement the same spec (e.g. "~3-4 days"). Use realistic professional estimates including code review and testing.
-- "human_team_minutes": numeric version of human_team in minutes. IMPORTANT: 1 work day = 8 hours = 480 minutes (not 24 hours).
-
-Write the plan to: ${path.join(getSprintDir(sprintId), 'plan.json')}`;
+${research}`;
 
     const result = await runAgentJob(job, 'planner', prompt, {
       budget: String(BUDGETS.plan),
@@ -78,8 +56,8 @@ Write the plan to: ${path.join(getSprintDir(sprintId), 'plan.json')}`;
 
     const plan: Plan = JSON.parse(fs.readFileSync(planFile, 'utf-8'));
 
-    // Enrich plan with developer_count if not set
-    plan.developer_count = plan.developer_count || developerCount;
+    // Always use the requested developer count — the planner may output a different value
+    plan.developer_count = developerCount;
 
     // Save enriched plan and update state
     fs.writeFileSync(planFile, JSON.stringify(plan, null, 2));

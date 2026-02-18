@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { useSprintDetail, pauseSprint, resumeSprint, restartSprint, retryTask } from '../hooks/use-sprint.js';
+import { useSprintDetail, pauseSprint, resumeSprint, restartSprint, cancelSprint, retryTask } from '../hooks/use-sprint.js';
 import { useWebSocket } from '../hooks/use-websocket.js';
 import { SprintStatusBadge } from '../components/StatusBadge.js';
 import { TaskList } from '../components/TaskList.js';
@@ -8,6 +8,8 @@ import { DeveloperPanel } from '../components/DeveloperPanel.js';
 import { LogViewer } from '../components/LogViewer.js';
 
 import { ApprovalDialog } from '../components/ApprovalDialog.js';
+import { MonitorPanel } from '../components/MonitorPanel.js';
+import { useMonitorChat, sendMonitorChat } from '../hooks/use-monitor.js';
 import type { ServerEvent, DeveloperIdentity, TaskState, PlanEstimates, CostData } from '@shared/types.js';
 
 interface PendingApproval {
@@ -22,7 +24,10 @@ export function SprintPage() {
   const { sprint, loading, refresh } = useSprintDetail(id);
   const { subscribe, send } = useWebSocket();
 
+  const { messages: monitorMessages, typing: monitorTyping, addMessage: addMonitorMessage, setTyping: setMonitorTyping } = useMonitorChat(id);
+
   const [implLogs, setImplLogs] = useState<Record<string, string[]>>({});
+  const [plannerLogs, setPlannerLogs] = useState<string[]>([]);
   const [testerLogs, setTesterLogs] = useState<string[]>([]);
   const [reviewerLogs, setReviewerLogs] = useState<string[]>([]);
   const [logsInitialized, setLogsInitialized] = useState(false);
@@ -44,7 +49,12 @@ export function SprintPage() {
         break;
 
       case 'task:log':
-        if (event.developerId === 'tester') {
+        if (event.developerId === 'planner') {
+          setPlannerLogs((prev) => {
+            if (prev.length > 0 && prev[prev.length - 1] === event.line) return prev;
+            return [...prev.slice(-300), event.line];
+          });
+        } else if (event.developerId === 'tester') {
           setTesterLogs((prev) => {
             if (prev.length > 0 && prev[prev.length - 1] === event.line) return prev;
             return [...prev.slice(-300), event.line];
@@ -84,8 +94,16 @@ export function SprintPage() {
       case 'cost:update':
         refresh();
         break;
+
+      case 'monitor:message':
+        addMonitorMessage(event.message);
+        break;
+
+      case 'monitor:typing':
+        setMonitorTyping(event.active);
+        break;
     }
-  }, [id, refresh]);
+  }, [id, refresh, addMonitorMessage, setMonitorTyping]);
 
   useEffect(() => {
     return subscribe(handleEvent);
@@ -97,7 +115,9 @@ export function SprintPage() {
     const logs = sprint.roleLogs;
     const newImplLogs: Record<string, string[]> = {};
     for (const [roleId, lines] of Object.entries(logs)) {
-      if (roleId === 'tester') {
+      if (roleId === 'planner') {
+        setPlannerLogs(lines);
+      } else if (roleId === 'tester') {
         setTesterLogs(lines);
       } else if (roleId === 'reviewer') {
         setReviewerLogs(lines);
@@ -157,6 +177,22 @@ export function SprintPage() {
     }
   };
 
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+
+  const handleCancel = async () => {
+    if (!id) return;
+    setShowCancelConfirm(false);
+    setActionInProgress(true);
+    try {
+      await cancelSprint(id);
+      refresh();
+    } catch (err) {
+      console.error('Cancel failed:', err);
+    } finally {
+      setActionInProgress(false);
+    }
+  };
+
   const handleRetryTask = async (taskId: number) => {
     if (!id) return;
     try {
@@ -166,6 +202,11 @@ export function SprintPage() {
       console.error('Retry failed:', err);
     }
   };
+
+  const handleMonitorSend = useCallback(async (content: string) => {
+    if (!id) return;
+    await sendMonitorChat(id, content);
+  }, [id]);
 
   if (loading) return <div className="text-gray-500">Loading...</div>;
   if (!sprint) return <div className="text-red-400">Sprint not found</div>;
@@ -182,6 +223,35 @@ export function SprintPage() {
 
   return (
     <div className="max-w-7xl mx-auto">
+      {showCancelConfirm && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-gray-800 border border-gray-600 rounded-lg p-6 max-w-md mx-4 shadow-xl">
+            <h3 className="text-lg font-semibold text-white mb-3">Cancel Sprint</h3>
+            <p className="text-gray-300 mb-2">
+              Are you sure you want to cancel this sprint?
+              {isActiveStatus(sprint.status) && ' The sprint will be stopped.'}
+            </p>
+            <p className="text-amber-400 text-sm mb-5">
+              Cancelled sprints cannot be restarted.
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setShowCancelConfirm(false)}
+                className="px-4 py-2 text-sm text-gray-300 hover:text-white bg-gray-700 hover:bg-gray-600 rounded transition-colors"
+              >
+                Keep Running
+              </button>
+              <button
+                onClick={handleCancel}
+                className="px-4 py-2 text-sm text-white bg-red-600 hover:bg-red-500 rounded transition-colors"
+              >
+                Cancel Sprint
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {approval && (
         <ApprovalDialog
           message={approval.message}
@@ -222,41 +292,66 @@ export function SprintPage() {
               Working
             </span>
           )}
-        {(sprint.status === 'running' || sprint.status === 'researching' || sprint.status === 'planning') && (
+        {sprint.status === 'pr-created' && (
+          <button
+            onClick={() => navigate(`/sprint/${id}/review`)}
+            className="px-3 py-1 bg-purple-600 text-white rounded text-sm hover:bg-purple-500"
+            title="Review pull request and complete sprint"
+          >
+            Review & Complete
+          </button>
+        )}
+        <div className="flex items-center gap-2 ml-auto">
+        {(sprint.status === 'running' || sprint.status === 'researching' || sprint.status === 'planning' || sprint.status === 'reviewing') && (
           <button
             onClick={handlePause}
             disabled={actionInProgress}
-            className="px-3 py-1 bg-amber-600 text-white rounded text-sm hover:bg-amber-500 disabled:opacity-50"
+            title="Pause sprint"
+            className="p-1.5 text-gray-400 hover:text-amber-400 hover:bg-gray-700 rounded transition-colors disabled:opacity-50"
           >
-            {actionInProgress ? 'Pausing...' : 'Pause'}
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+              <rect x="3" y="2" width="4" height="12" rx="1" />
+              <rect x="9" y="2" width="4" height="12" rx="1" />
+            </svg>
           </button>
         )}
         {sprint.status === 'paused' && (
           <button
             onClick={handleResume}
             disabled={actionInProgress}
-            className="px-3 py-1 bg-green-600 text-white rounded text-sm hover:bg-green-500 disabled:opacity-50"
+            title="Resume sprint"
+            className="p-1.5 text-gray-400 hover:text-green-400 hover:bg-gray-700 rounded transition-colors disabled:opacity-50"
           >
-            {actionInProgress ? 'Resuming...' : 'Resume'}
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+              <polygon points="3,2 14,8 3,14" />
+            </svg>
           </button>
         )}
-        {(sprint.status === 'pr-created' || sprint.status === 'reviewing') && (
-          <button
-            onClick={() => navigate(`/sprint/${id}/review`)}
-            className="px-3 py-1 bg-purple-600 text-white rounded text-sm hover:bg-purple-500"
-          >
-            Review & Complete
-          </button>
-        )}
-        {(sprint.status === 'failed' || sprint.status === 'cancelled' || sprint.status === 'running' || sprint.status === 'paused' || sprint.status === 'reviewing') && (
+        {(sprint.status === 'failed' || sprint.status === 'running' || sprint.status === 'paused' || sprint.status === 'reviewing') && (
           <button
             onClick={handleRestart}
             disabled={actionInProgress}
-            className="px-3 py-1 bg-yellow-600 text-white rounded text-sm hover:bg-yellow-500 disabled:opacity-50"
+            title="Restart sprint from scratch"
+            className="p-1.5 text-gray-400 hover:text-yellow-400 hover:bg-gray-700 rounded transition-colors disabled:opacity-50"
           >
-            {actionInProgress ? 'Restarting...' : 'Restart'}
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+              <path d="M8 3a5 5 0 1 0 5 5h-2a3 3 0 1 1-3-3V1l4 3-4 3V3z" />
+            </svg>
           </button>
         )}
+        {!['completed', 'pr-created', 'cancelled'].includes(sprint.status) && (
+          <button
+            onClick={() => setShowCancelConfirm(true)}
+            disabled={actionInProgress}
+            title="Cancel sprint"
+            className="p-1.5 text-gray-400 hover:text-red-400 hover:bg-gray-700 rounded transition-colors disabled:opacity-50 ml-2"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+              <path d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708z" />
+            </svg>
+          </button>
+        )}
+        </div>
         </div>
         {sprint.spec && (
           <div className="text-sm text-gray-400">
@@ -272,9 +367,11 @@ export function SprintPage() {
           </div>
         )}
         {sprint.plan?.estimates && (
-          <EstimateLine estimates={sprint.plan.estimates} costs={sprint.costs} status={sprint.status} approvedAt={sprint.approvedAt} />
+          <EstimateLine estimates={sprint.plan.estimates} costs={sprint.costs} status={sprint.status} approvedAt={sprint.approvedAt} completedAt={sprint.completedAt} approvalWaitSeconds={sprint.approvalWaitSeconds} />
         )}
       </div>
+
+      <MonitorPanel messages={monitorMessages} typing={monitorTyping} onSend={handleMonitorSend} />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left: Task List */}
@@ -319,6 +416,20 @@ export function SprintPage() {
               />
             );
           })}
+
+          {/* Planner Section — visible if planner runs after approval (e.g. re-planning) */}
+          {plannerLogs.length > 0 && sprint.status !== 'researching' && sprint.status !== 'planning' && (
+            <>
+              <h3 className="text-xs font-medium text-gray-600 uppercase tracking-wider mt-6">Planner</h3>
+              <div className="border border-indigo-800 rounded-lg p-4 bg-gray-900">
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="w-3 h-3 rounded-full bg-indigo-500" />
+                  <h3 className="text-sm font-semibold text-indigo-400">Planner</h3>
+                </div>
+                <LogViewer lines={plannerLogs} maxHeight="200px" />
+              </div>
+            </>
+          )}
 
           {/* Testers Section — visible during reviewing/pr-created/completed */}
           {(sprint.status === 'reviewing' || sprint.status === 'pr-created' || sprint.status === 'completed' || testerLogs.length > 0) && (
@@ -378,31 +489,35 @@ function isActiveStatus(status: string): boolean {
 const AGENT_ORDER: Record<string, number> = { researcher: 0, planner: 1, developer: 2, implementer: 2, tester: 3, reviewer: 4 };
 const AGENT_LABELS: Record<string, string> = { implementer: 'Developer' };
 
-function EstimateLine({ estimates, costs, status, approvedAt }: { estimates: PlanEstimates; costs: CostData; status: string; approvedAt?: string }) {
+function EstimateLine({ estimates, costs, status, approvedAt, completedAt, approvalWaitSeconds = 0 }: { estimates: PlanEstimates; costs: CostData; status: string; approvedAt?: string; completedAt?: string; approvalWaitSeconds?: number }) {
   const agentEntries = Object.entries(costs.by_agent)
     .sort(([a], [b]) => (AGENT_ORDER[a] ?? 99) - (AGENT_ORDER[b] ?? 99));
 
   const active = isActiveStatus(status);
 
   // Wall clock elapsed time since sprint plan approval
+  // For finished sprints, cap at completedAt so the time doesn't keep growing
   const [wallSeconds, setWallSeconds] = useState(() => {
     if (!approvedAt) return 0;
-    return Math.max(0, Math.floor((Date.now() - new Date(approvedAt).getTime()) / 1000));
+    const start = new Date(approvedAt).getTime();
+    const end = completedAt ? new Date(completedAt).getTime() : Date.now();
+    return Math.max(0, Math.floor((end - start) / 1000));
   });
   const [colonVisible, setColonVisible] = useState(true);
   useEffect(() => {
     if (!approvedAt) return;
     const start = new Date(approvedAt).getTime();
-    setWallSeconds(Math.max(0, Math.floor((Date.now() - start) / 1000)));
+    const end = completedAt ? new Date(completedAt).getTime() : Date.now();
+    setWallSeconds(Math.max(0, Math.floor((end - start) / 1000)));
     if (!active) return;
     const t = setInterval(() => {
       setWallSeconds(Math.max(0, Math.floor((Date.now() - start) / 1000)));
       setColonVisible((v) => !v);
     }, 1000);
     return () => clearInterval(t);
-  }, [active, approvedAt]);
+  }, [active, approvedAt, completedAt]);
 
-  const actualSeconds = wallSeconds;
+  const actualSeconds = Math.max(0, wallSeconds - approvalWaitSeconds);
 
   const agentTotal = agentEntries.reduce((sum, [, s]) => sum + s, 0);
 
@@ -430,12 +545,23 @@ function EstimateLine({ estimates, costs, status, approvedAt }: { estimates: Pla
           </>
         )}
       </div>
-      {(actualSeconds > 0 || active) && (
+      {(actualSeconds > 0 || agentTotal > 0 || active) && (
         <div className="relative flex items-center gap-x-2">
-          <span>
-            <span className="text-gray-500">Actual:</span>{' '}
-            <span className={`text-blue-300${active ? ' tabular-nums' : ''}`}>&#x1F916; {formatDuration(actualSeconds, active ? colonVisible : true)}</span>
-          </span>
+          {agentTotal > 0 && (
+            <span>
+              <span className="text-gray-500">Agents:</span>{' '}
+              <span className="text-blue-300 tabular-nums">{formatDuration(agentTotal)}</span>
+            </span>
+          )}
+          {agentTotal > 0 && (actualSeconds > 0 || active) && (
+            <span className="text-gray-600">|</span>
+          )}
+          {(actualSeconds > 0 || active) && (
+            <span>
+              <span className="text-gray-500">Wall:</span>{' '}
+              <span className={`text-gray-300${active ? ' tabular-nums' : ''}`}>{formatDuration(actualSeconds, active ? colonVisible : true)}</span>
+            </span>
+          )}
           {agentEntries.length > 0 && (
             <>
               <button
@@ -464,8 +590,12 @@ function EstimateLine({ estimates, costs, status, approvedAt }: { estimates: Pla
                       );
                     })}
                     <div className="border-t border-gray-700 pt-1.5 mt-1.5 flex justify-between text-xs font-medium">
-                      <span className="text-gray-300">Total</span>
+                      <span className="text-gray-300">Agents total</span>
                       <span className="text-gray-300 tabular-nums">{formatDuration(agentTotal)}</span>
+                    </div>
+                    <div className="flex justify-between text-xs font-medium">
+                      <span className="text-gray-300">Wall clock</span>
+                      <span className="text-gray-300 tabular-nums">{formatDuration(actualSeconds)}</span>
                     </div>
                   </div>
                 </div>

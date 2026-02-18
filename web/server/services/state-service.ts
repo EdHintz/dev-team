@@ -76,6 +76,8 @@ export interface SprintState {
   autonomyMode: AutonomyMode;
   createdAt: string;
   approvedAt?: string;
+  completedAt?: string;
+  approvalWaitSeconds: number;
 }
 
 export interface PendingApproval {
@@ -129,6 +131,7 @@ export function initSprint(
     specPath,
     autonomyMode,
     createdAt,
+    approvalWaitSeconds: 0,
   };
 
   sprints.set(sprintId, state);
@@ -201,6 +204,8 @@ export function getOrHydrateSprint(sprintId: string): SprintState | undefined {
     autonomyMode: meta.autonomyMode || 'supervised',
     createdAt: meta.createdAt,
     approvedAt: meta.approvedAt,
+    completedAt: meta.completedAt,
+    approvalWaitSeconds: meta.approvalWaitSeconds || 0,
   };
 
   sprints.set(sprintId, state);
@@ -274,6 +279,7 @@ export function getSprintDetail(sprintId: string): SprintDetail {
       currentWave: state.currentWave,
       reviewCycle: state.reviewCycle,
       costs: state.costs,
+      approvalWaitSeconds: state.approvalWaitSeconds,
       roleLogs,
       prUrl,
     };
@@ -311,11 +317,34 @@ function loadRoleLogs(sprintId: string): Record<string, string[]> {
 
 // --- State Mutations ---
 
+const TERMINAL_STATUSES = new Set<SprintStatus>(['completed', 'pr-created', 'failed', 'cancelled']);
+
 export function setSprintStatus(sprintId: string, status: SprintStatus): void {
   const sprint = getSprintOrThrow(sprintId);
   sprint.status = status;
   writeStatus(sprintId, status);
+
+  // Record completion timestamp on terminal statuses
+  if (TERMINAL_STATUSES.has(status) && !sprint.completedAt) {
+    sprint.completedAt = new Date().toISOString();
+    const meta = readMeta(sprintId);
+    if (meta) {
+      meta.completedAt = sprint.completedAt;
+      writeMeta(sprintId, meta);
+    }
+  }
+
   log.info(`Sprint ${sprintId} status: ${status}`);
+}
+
+export function addApprovalWaitTime(sprintId: string, seconds: number): void {
+  const sprint = getSprintOrThrow(sprintId);
+  sprint.approvalWaitSeconds += seconds;
+  const meta = readMeta(sprintId);
+  if (meta) {
+    meta.approvalWaitSeconds = sprint.approvalWaitSeconds;
+    writeMeta(sprintId, meta);
+  }
 }
 
 export function setReviewCycle(sprintId: string, cycle: number): void {
@@ -360,7 +389,8 @@ export function setSprintPlan(sprintId: string, plan: Plan): void {
  * Normalize a plan's tasks to ensure consistent types.
  * Handles: string IDs ("task-1" → 1), missing agent fields, missing arrays.
  */
-function normalizePlan(plan: Plan): void {
+function normalizePlan(plan: Plan, silent = false): void {
+  const warn = silent ? () => {} : log.warn.bind(log);
   for (let i = 0; i < plan.tasks.length; i++) {
     const task = plan.tasks[i];
 
@@ -369,10 +399,10 @@ function normalizePlan(plan: Plan): void {
       const original = task.id;
       const numericPart = (task.id as string).replace(/\D/g, '');
       (task as { id: number }).id = numericPart ? parseInt(numericPart, 10) : i + 1;
-      log.warn(`Planner produced string task ID "${original}", coerced to ${task.id}`);
+      warn(`Planner produced string task ID "${original}", coerced to ${task.id}`);
     } else if (typeof task.id !== 'number') {
       (task as { id: number }).id = i + 1;
-      log.warn(`Planner produced non-numeric task ID, defaulted to ${task.id}`);
+      warn(`Planner produced non-numeric task ID, defaulted to ${task.id}`);
     }
 
     // Normalize agent: map legacy 'implementer' → 'developer'
@@ -388,7 +418,7 @@ function normalizePlan(plan: Plan): void {
     if (task.depends_on) {
       task.depends_on = task.depends_on.map((dep) => {
         if (typeof dep === 'string') {
-          log.warn(`Planner produced string dependency "${dep}" in task ${task.id}, coercing`);
+          warn(`Planner produced string dependency "${dep}" in task ${task.id}, coercing`);
           const numPart = (dep as unknown as string).replace(/\D/g, '');
           return numPart ? parseInt(numPart, 10) : 0;
         }
@@ -398,9 +428,36 @@ function normalizePlan(plan: Plan): void {
       task.depends_on = [];
     }
 
+    // Enforce small complexity — planner sometimes ignores this
+    if (task.complexity && task.complexity !== 'small') {
+      warn(`Task ${task.id} has complexity "${task.complexity}", forcing to "small"`);
+      task.complexity = 'small';
+    }
+
     // Default missing arrays
     if (!task.labels) task.labels = [];
     if (!task.acceptance_criteria) task.acceptance_criteria = [];
+  }
+
+  // Normalize assigned_to: map legacy "implementer-N" → "developer-N", then clamp to valid IDs
+  const devCount = plan.developer_count || DEFAULT_DEVELOPER_COUNT;
+  const validDevIds = new Set<string>(DEVELOPER_POOL.slice(0, devCount).map((d) => d.id));
+  for (const task of plan.tasks) {
+    // Translate implementer-N → developer-N
+    if (task.assigned_to) {
+      const implMatch = task.assigned_to.match(/^implementer-(\d+)$/);
+      if (implMatch) {
+        const mapped = `developer-${implMatch[1]}`;
+        warn(`Task ${task.id} assigned to "${task.assigned_to}", mapped to "${mapped}"`);
+        task.assigned_to = mapped;
+      }
+    }
+    // Clamp to valid developer IDs
+    if (task.assigned_to && !validDevIds.has(task.assigned_to)) {
+      const original = task.assigned_to;
+      task.assigned_to = DEVELOPER_POOL[(task.id - 1) % devCount].id;
+      warn(`Task ${task.id} assigned to "${original}" which exceeds developer_count=${devCount}, reassigned to ${task.assigned_to}`);
+    }
   }
 
   // Default missing numeric estimate fields
@@ -668,8 +725,15 @@ export function loadActiveSprintsFromDisk(): number {
       if (activeStatuses.has(status)) {
         const result = loadSprintFromDisk(sprintId);
         if (result) {
+          // Pause previously-running sprints so the monitor doesn't auto-resume them
+          const runningStatuses = new Set(['running', 'researching', 'planning', 'approved']);
+          if (runningStatuses.has(status)) {
+            result.status = 'paused';
+            writeStatus(sprintId, 'paused');
+            log.info(`Auto-paused sprint ${sprintId} (was ${status}) — resume manually if needed`);
+          }
           loaded++;
-          log.info(`Auto-loaded sprint ${sprintId} (status: ${status})`);
+          log.info(`Auto-loaded sprint ${sprintId} (status: ${result.status})`);
         }
       }
     }
@@ -713,6 +777,8 @@ export function loadSprintFromDisk(sprintId: string, targetDir?: string): Sprint
     autonomyMode: meta?.autonomyMode || 'supervised',
     createdAt: meta?.createdAt || '',
     approvedAt: meta?.approvedAt,
+    completedAt: meta?.completedAt,
+    approvalWaitSeconds: meta?.approvalWaitSeconds || 0,
   };
 
   if (plan) {
@@ -757,7 +823,7 @@ function readPlan(sprintId: string): Plan | null {
   if (!fs.existsSync(file)) return null;
   try {
     const plan = JSON.parse(fs.readFileSync(file, 'utf-8')) as Plan;
-    normalizePlan(plan);
+    normalizePlan(plan, true);
     return plan;
   } catch {
     return null;
@@ -833,12 +899,14 @@ function loadSprintDetailFromDisk(sprintId: string): SprintDetail {
     completedCount: completed.size,
     developerCount,
     approvedAt: meta?.approvedAt,
+    completedAt: meta?.completedAt,
     plan,
     tasks,
     developers,
     currentWave: 0,
     reviewCycle: 0,
     costs,
+    approvalWaitSeconds: meta?.approvalWaitSeconds || 0,
     autonomyMode: meta?.autonomyMode,
   };
 }
@@ -859,6 +927,7 @@ function loadSprintSummaryFromDisk(sprintId: string): SprintSummary {
     developerCount: plan?.developer_count || DEFAULT_DEVELOPER_COUNT,
     createdAt: meta?.createdAt,
     approvedAt: meta?.approvedAt,
+    completedAt: meta?.completedAt,
     targetDir: meta?.targetDir,
     autonomyMode: meta?.autonomyMode,
   };
@@ -870,6 +939,8 @@ interface SprintMeta {
   developerCount: number;
   createdAt: string;
   approvedAt?: string;
+  completedAt?: string;
+  approvalWaitSeconds?: number;
   name?: string;
   autonomyMode?: AutonomyMode;
 }
@@ -901,6 +972,7 @@ function sprintStateToSummary(state: SprintState): SprintSummary {
     developerCount: state.developers.length,
     createdAt: state.createdAt,
     approvedAt: state.approvedAt,
+    completedAt: state.completedAt,
     targetDir: state.targetDir,
     autonomyMode: state.autonomyMode,
   };

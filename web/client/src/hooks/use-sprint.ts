@@ -12,7 +12,6 @@ export function useSprints() {
 
   const refresh = useCallback(async () => {
     try {
-      setLoading(true);
       const res = await fetch(`${API_BASE}/sprints`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setSprints(await res.json());
@@ -37,7 +36,6 @@ export function useSprintDetail(sprintId: string | undefined) {
   const refresh = useCallback(async () => {
     if (!sprintId) return;
     try {
-      setLoading(true);
       const res = await fetch(`${API_BASE}/sprints/${sprintId}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setSprint(await res.json());

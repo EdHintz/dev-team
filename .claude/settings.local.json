@@ -35,7 +35,20 @@
       "Bash(npm install:*)",
       "Bash(npm view:*)",
       "Bash(timeout 8 npx tsx:*)",
-      "Bash(npx tsx:*)"
+      "Bash(npx tsx:*)",
+      "Bash(redis-cli:*)",
+      "Bash(redis-cli llen:*)",
+      "Bash(CLAUDECODE= claude -p --output-format stream-json \"Say hello in 3 words\")",
+      "Bash(CLAUDECODE= claude -p --output-format stream-json --verbose \"Say hello in 3 words\")",
+      "Bash(CLAUDECODE= claude -p --output-format stream-json --verbose --max-turns 2 \"Read the file /Users/edhintz/dev/dev-team/web/shared/types.ts and tell me how many interfaces it defines\")",
+      "Bash(CLAUDECODE= claude:*)",
+      "Bash(node --version:*)",
+      "Bash(for:*)",
+      "Bash(do echo \"=== $d ===\")",
+      "Bash(sqlite3:*)",
+      "Bash(pgrep:*)",
+      "Bash(xargs:*)",
+      "mcp__plugin_claude-mem_mcp-search__get_observations"
     ]
   }
 }

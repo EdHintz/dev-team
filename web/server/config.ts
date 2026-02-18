@@ -33,6 +33,7 @@ export const BUDGETS = {
   task: parseFloat(process.env.DEFAULT_TASK_BUDGET || '6.00'),
   review: parseFloat(process.env.DEFAULT_REVIEW_BUDGET || '3.00'),
   test: parseFloat(process.env.DEFAULT_TEST_BUDGET || '3.00'),
+  monitor: parseFloat(process.env.DEFAULT_MONITOR_BUDGET || '1.00'),
 } as const;
 
 // --- Model Selection ---
@@ -42,6 +43,7 @@ export const MODELS = {
   reviewer: process.env.REVIEWER_MODEL || 'opus',
   researcher: process.env.RESEARCHER_MODEL || 'opus',
   tester: process.env.TESTER_MODEL || 'opus',
+  monitor: process.env.MONITOR_MODEL || 'sonnet',
 } as const;
 
 export type AgentName = keyof typeof MODELS;
@@ -53,6 +55,10 @@ export function getModelForAgent(agent: string): string {
 // --- Limits ---
 export const MAX_FIX_CYCLES = parseInt(process.env.MAX_FIX_CYCLES || '3', 10);
 export const DEFAULT_DEVELOPER_COUNT = parseInt(process.env.DEVELOPER_COUNT || '2', 10);
+
+// --- Monitor ---
+export const MONITOR_POLL_INTERVAL_MS = parseInt(process.env.MONITOR_POLL_INTERVAL || '60000', 10);
+export const MONITOR_STUCK_THRESHOLD_MINUTES = parseInt(process.env.MONITOR_STUCK_THRESHOLD || '10', 10);
 
 // --- Developer Identities ---
 export const DEVELOPER_POOL = [

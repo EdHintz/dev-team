@@ -162,7 +162,7 @@ sprintRoutes.post('/:id/restart', async (req, res) => {
     return;
   }
 
-  const restartableStatuses = new Set(['failed', 'cancelled', 'running', 'paused', 'reviewing']);
+  const restartableStatuses = new Set(['failed', 'running', 'paused', 'reviewing']);
   if (!restartableStatuses.has(sprint.status)) {
     res.status(400).json({ error: `Sprint is in status '${sprint.status}', cannot restart` });
     return;
@@ -192,7 +192,7 @@ sprintRoutes.post('/:id/restart', async (req, res) => {
     } else {
       // No review yet — re-enqueue review cycle 1
       const { enqueueReview } = await import('../queues/queue-manager.js');
-      await enqueueReview(id, 1);
+      await enqueueReview(id, 1, true);
       res.json({ id, status: 'reviewing', message: 'Review cycle 1 re-enqueued.' });
     }
     return;
@@ -251,12 +251,25 @@ sprintRoutes.post('/:id/restart', async (req, res) => {
   if (nonCompletedTaskIds.length > 0) {
     const { restartSprint: restartSprintQueue } = await import('../queues/queue-manager.js');
     await restartSprintQueue(id, nonCompletedTaskIds);
+    setSprintStatus(id, 'running');
+    broadcast({ type: 'sprint:status', sprintId: id, status: 'running' });
+    res.json({ id, status: 'running', message: `Sprint restarted with ${nonCompletedTaskIds.length} tasks enqueued.` });
+  } else {
+    // All tasks completed but sprint never advanced — re-trigger finalization (merge + review)
+    const { finalizeImplementation } = await import('../services/git-service.js');
+    const { enqueueTesting } = await import('../queues/queue-manager.js');
+    try {
+      await finalizeImplementation(sprint.targetDir, id, developers);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: `Finalization failed: ${msg}` });
+      return;
+    }
+    setSprintStatus(id, 'reviewing');
+    broadcast({ type: 'sprint:status', sprintId: id, status: 'reviewing' });
+    await enqueueTesting(id, true);
+    res.json({ id, status: 'reviewing', message: 'All tasks already complete — re-triggered finalization and review.' });
   }
-
-  setSprintStatus(id, 'running');
-  broadcast({ type: 'sprint:status', sprintId: id, status: 'running' });
-
-  res.json({ id, status: 'running', message: `Sprint restarted with ${nonCompletedTaskIds.length} tasks enqueued.` });
 });
 
 // Pause a running sprint (current tasks finish, no new tasks start)
@@ -384,7 +397,7 @@ sprintRoutes.post('/:id/merge-local', async (req, res) => {
 });
 
 // Cancel a sprint
-sprintRoutes.post('/:id/cancel', (_req, res) => {
+sprintRoutes.post('/:id/cancel', async (_req, res) => {
   const { id } = _req.params;
   const sprint = getSprint(id);
   if (!sprint) {
@@ -395,7 +408,15 @@ sprintRoutes.post('/:id/cancel', (_req, res) => {
   setSprintStatus(id, 'cancelled');
   broadcast({ type: 'sprint:status', sprintId: id, status: 'cancelled' });
 
-  res.json({ id, status: 'cancelled' });
+  // Drain any queued jobs for this sprint from Redis
+  try {
+    const { drainSprintJobs } = await import('../queues/queue-manager.js');
+    const removed = await drainSprintJobs(id);
+    res.json({ id, status: 'cancelled', jobsRemoved: removed });
+  } catch (err) {
+    // Status already set — queue drain is best-effort
+    res.json({ id, status: 'cancelled', jobsRemoved: 0 });
+  }
 });
 
 // Get sprint spec file
@@ -407,6 +428,34 @@ sprintRoutes.get('/:id/spec', (req, res) => {
     return;
   }
   res.type('text/markdown').send(fs.readFileSync(specFile, 'utf-8'));
+});
+
+// Get monitor chat history
+sprintRoutes.get('/:id/monitor-chat', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const { loadChatHistory } = await import('../services/monitor-service.js');
+    res.json(loadChatHistory(id));
+  } catch {
+    res.json([]);
+  }
+});
+
+// Send a message to the monitor
+sprintRoutes.post('/:id/monitor-chat', async (req, res) => {
+  const { id } = req.params;
+  const { content } = req.body || {};
+  if (!content || typeof content !== 'string') {
+    res.status(400).json({ error: 'content is required' });
+    return;
+  }
+  try {
+    const { handleUserMessage } = await import('../services/monitor-service.js');
+    handleUserMessage(id, content);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
 });
 
 sprintRoutes.get('/:id/logs', (req, res) => {
