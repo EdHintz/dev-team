@@ -135,16 +135,14 @@ export async function enqueuePlanningPipeline(
   specPath: string,
   targetDir: string,
   _developerCount: number,
-  retry = false,
 ): Promise<void> {
-  const suffix = retry ? `-retry-${Date.now()}` : '';
   // Step 1: Research
   await researchQueue.add('research', {
     sprintId,
     specPath,
     targetDir,
   }, {
-    jobId: `research-${sprintId}${suffix}`,
+    jobId: `research-${sprintId}-${Date.now()}`,
   });
 
   log.info(`Enqueued research job for ${sprintId}`);
@@ -155,16 +153,14 @@ export async function enqueuePlanning(
   specPath: string,
   targetDir: string,
   developerCount: number,
-  retry = false,
 ): Promise<void> {
-  const suffix = retry ? `-retry-${Date.now()}` : '';
   await planningQueue.add('planning', {
     sprintId,
     specPath,
     targetDir,
     developerCount,
   }, {
-    jobId: `planning-${sprintId}${suffix}`,
+    jobId: `planning-${sprintId}-${Date.now()}`,
   });
 
   log.info(`Enqueued planning job for ${sprintId}`);

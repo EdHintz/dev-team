@@ -162,9 +162,30 @@ sprintRoutes.post('/:id/restart', async (req, res) => {
     return;
   }
 
-  const restartableStatuses = new Set(['failed', 'running', 'paused', 'reviewing']);
+  const restartableStatuses = new Set(['failed', 'running', 'paused', 'reviewing', 'planning', 'researching']);
   if (!restartableStatuses.has(sprint.status)) {
     res.status(400).json({ error: `Sprint is in status '${sprint.status}', cannot restart` });
+    return;
+  }
+
+  // If stuck in planning/researching, re-enqueue the appropriate pipeline stage
+  if (sprint.status === 'planning' || sprint.status === 'researching') {
+    const sprintDir = getSprintDir(id);
+    const hasResearch = fs.existsSync(path.join(sprintDir, 'research.md'));
+    const resolvedSpec = sprint.specPath;
+    const resolvedTargetDir = sprint.targetDir;
+
+    if (sprint.status === 'planning' && hasResearch) {
+      const { enqueuePlanning } = await import('../queues/queue-manager.js');
+      await enqueuePlanning(id, resolvedSpec, resolvedTargetDir, sprint.developers.length);
+      res.json({ id, status: 'planning', message: 'Planning job re-enqueued.' });
+    } else {
+      const { enqueuePlanningPipeline } = await import('../queues/queue-manager.js');
+      await enqueuePlanningPipeline(id, resolvedSpec, resolvedTargetDir, sprint.developers.length);
+      setSprintStatus(id, 'researching');
+      broadcast({ type: 'sprint:status', sprintId: id, status: 'researching' });
+      res.json({ id, status: 'researching', message: 'Research + planning pipeline re-enqueued.' });
+    }
     return;
   }
 
@@ -216,14 +237,14 @@ sprintRoutes.post('/:id/restart', async (req, res) => {
     if (!hasResearch) {
       // No research yet — restart from the beginning
       const { enqueuePlanningPipeline } = await import('../queues/queue-manager.js');
-      await enqueuePlanningPipeline(id, resolvedSpec, resolvedTargetDir, sprint.developers.length, true);
+      await enqueuePlanningPipeline(id, resolvedSpec, resolvedTargetDir, sprint.developers.length);
       setSprintStatus(id, 'researching');
       broadcast({ type: 'sprint:status', sprintId: id, status: 'researching' });
       res.json({ id, status: 'researching', message: 'Sprint restarted from research phase.' });
     } else {
       // Research exists — skip to planning
       const { enqueuePlanning } = await import('../queues/queue-manager.js');
-      await enqueuePlanning(id, resolvedSpec, resolvedTargetDir, sprint.developers.length, true);
+      await enqueuePlanning(id, resolvedSpec, resolvedTargetDir, sprint.developers.length);
       setSprintStatus(id, 'planning');
       broadcast({ type: 'sprint:status', sprintId: id, status: 'planning' });
       res.json({ id, status: 'planning', message: 'Sprint restarted from planning phase (research already complete).' });
