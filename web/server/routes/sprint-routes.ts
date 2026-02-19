@@ -192,7 +192,7 @@ sprintRoutes.post('/:id/restart', async (req, res) => {
     } else {
       // No review yet — re-enqueue review cycle 1
       const { enqueueReview } = await import('../queues/queue-manager.js');
-      await enqueueReview(id, 1, true);
+      await enqueueReview(id, 1);
       res.json({ id, status: 'reviewing', message: 'Review cycle 1 re-enqueued.' });
     }
     return;
@@ -267,7 +267,7 @@ sprintRoutes.post('/:id/restart', async (req, res) => {
     }
     setSprintStatus(id, 'reviewing');
     broadcast({ type: 'sprint:status', sprintId: id, status: 'reviewing' });
-    await enqueueTesting(id, true);
+    await enqueueTesting(id);
     res.json({ id, status: 'reviewing', message: 'All tasks already complete — re-triggered finalization and review.' });
   }
 });

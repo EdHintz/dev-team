@@ -234,30 +234,28 @@ export async function enqueueNextWave(sprintId: string, wave: number): Promise<n
   return tasks.length;
 }
 
-export async function enqueueTesting(sprintId: string, retry = false): Promise<void> {
+export async function enqueueTesting(sprintId: string): Promise<void> {
   const sprint = getSprintOrThrow(sprintId);
-  const suffix = retry ? `-retry-${Date.now()}` : '';
 
   await testingQueue.add('test', {
     sprintId,
     targetDir: sprint.targetDir,
   }, {
-    jobId: `test-${sprintId}${suffix}`,
+    jobId: `test-${sprintId}-${Date.now()}`,
   });
 
   log.info(`Enqueued testing job for ${sprintId}`);
 }
 
-export async function enqueueReview(sprintId: string, cycle: number, retry = false): Promise<void> {
+export async function enqueueReview(sprintId: string, cycle: number): Promise<void> {
   const sprint = getSprintOrThrow(sprintId);
-  const suffix = retry ? `-retry-${Date.now()}` : '';
 
   await reviewQueue.add('review', {
     sprintId,
     cycle,
     targetDir: sprint.targetDir,
   }, {
-    jobId: `review-${sprintId}-${cycle}${suffix}`,
+    jobId: `review-${sprintId}-${cycle}-${Date.now()}`,
   });
 
   log.info(`Enqueued review job for ${sprintId} (cycle ${cycle})`);

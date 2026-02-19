@@ -82,7 +82,7 @@ export async function runAgent(options: RunAgentOptions): Promise<AgentResult> {
     const child = spawn(CLAUDE_BIN, args, {
       cwd: options.cwd,
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env },
+      env: { ...process.env, CLAUDECODE: undefined },
     });
 
     // Close stdin immediately to prevent agent from waiting for input

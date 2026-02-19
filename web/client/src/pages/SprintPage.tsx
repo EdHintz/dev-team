@@ -331,7 +331,7 @@ export function SprintPage() {
           <button
             onClick={handleRestart}
             disabled={actionInProgress}
-            title="Restart sprint from scratch"
+            title="Restart sprint — re-enqueue pending tasks"
             className="p-1.5 text-gray-400 hover:text-yellow-400 hover:bg-gray-700 rounded transition-colors disabled:opacity-50"
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">

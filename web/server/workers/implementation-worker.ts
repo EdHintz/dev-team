@@ -477,38 +477,139 @@ Instructions:
 }
 
 /**
+ * Mutex map to prevent concurrent wave/bug-cycle completions for the same sprint.
+ * When two developers finish their last wave task at nearly the same time, both
+ * workers call checkWaveCompletion. Without this lock, both would see allDone=true
+ * and concurrently run mergeWaveAndReset, causing git state corruption.
+ */
+const transitionLocks = new Map<string, Promise<void>>();
+
+async function withTransitionLock(key: string, fn: () => Promise<void>): Promise<void> {
+  // Wait for any in-flight transition for this key
+  const existing = transitionLocks.get(key);
+  if (existing) {
+    await existing;
+  }
+
+  const promise = fn();
+  transitionLocks.set(key, promise);
+  try {
+    await promise;
+  } finally {
+    // Only clear if we're still the active lock holder
+    if (transitionLocks.get(key) === promise) {
+      transitionLocks.delete(key);
+    }
+  }
+}
+
+/**
  * After a task completes, check if all tasks in its wave are done.
  * If so, enqueue the next wave's tasks.
  */
 async function checkWaveCompletion(sprintId: string, wave: number): Promise<void> {
-  const sprint = getSprint(sprintId);
-  if (!sprint?.plan) return;
+  await withTransitionLock(`wave-${sprintId}`, async () => {
+    const sprint = getSprint(sprintId);
+    if (!sprint?.plan) return;
 
-  // Find all tasks in this wave
-  const waveTasks = sprint.plan.tasks.filter((t) => (t.wave || 1) === wave);
-  const allDone = waveTasks.every((t) => {
-    const state = sprint.tasks.get(t.id);
-    return state?.status === 'completed';
+    // Find all tasks in this wave
+    const waveTasks = sprint.plan.tasks.filter((t) => (t.wave || 1) === wave);
+    const allDone = waveTasks.every((t) => {
+      const state = sprint.tasks.get(t.id);
+      return state?.status === 'completed';
+    });
+
+    if (!allDone) return;
+
+    // Check if the next wave was already started (guard against duplicate triggers)
+    const nextWave = wave + 1;
+    if (sprint.currentWave !== undefined && sprint.currentWave >= nextWave) {
+      log.info(`Wave ${wave} already transitioned for ${sprintId}, skipping`);
+      return;
+    }
+
+    log.info(`Wave ${wave} complete for ${sprintId}`);
+    broadcast({ type: 'wave:completed', sprintId, wave });
+
+    const developers = sprint.developers.map((dev) => ({ id: dev.id, name: dev.name }));
+
+    const nextWaveTasks = sprint.plan.tasks.filter((t) =>
+      (t.wave || 1) === nextWave && t.assigned_to
+    );
+
+    const conflictResolver = createConflictResolver(sprintId);
+
+    if (nextWaveTasks.length === 0) {
+      // No more implementation waves — finalize git and move to testing
+      log.info(`All implementation waves complete for ${sprintId}, finalizing git`);
+
+      const { finalizeImplementation } = await import('../services/git-service.js');
+      await finalizeImplementation(sprint.targetDir, sprintId, developers, conflictResolver);
+
+      const { setSprintStatus } = await import('../services/state-service.js');
+      setSprintStatus(sprintId, 'reviewing');
+      broadcast({ type: 'sprint:status', sprintId, status: 'reviewing' });
+
+      const { enqueueTesting } = await import('../queues/queue-manager.js');
+      await enqueueTesting(sprintId);
+      return;
+    }
+
+    // Merge this wave's work and reset worktrees for the next wave
+    log.info(`Merging wave ${wave} and preparing wave ${nextWave} for ${sprintId}`);
+    const { mergeWaveAndReset } = await import('../services/git-service.js');
+    const mergeResults = await mergeWaveAndReset(sprint.targetDir, sprintId, developers, conflictResolver);
+
+    const failedMerges = mergeResults.filter((r) => !r.success);
+    for (const dev of developers) {
+      const idx = developers.findIndex((d) => d.id === dev.id);
+      const devId = dev.id;
+      const result = mergeResults[idx];
+      if (result) {
+        broadcast({ type: 'merge:completed', sprintId, developerId: devId, success: result.success, conflicts: result.conflicts });
+      }
+    }
+    if (failedMerges.length > 0) {
+      log.warn(`Merge conflicts after wave ${wave} (${failedMerges.length} unresolved)`, { conflicts: failedMerges.map((c) => c.conflicts) });
+      broadcast({ type: 'error', sprintId, message: `${failedMerges.length} merge conflict(s) could not be resolved after wave ${wave} — continuing to next wave` });
+    }
+
+    // Always enqueue next wave, even if some merges failed
+    log.info(`Starting wave ${nextWave} for ${sprintId} (${nextWaveTasks.length} tasks)`);
+    broadcast({ type: 'wave:started', sprintId, wave: nextWave, taskIds: nextWaveTasks.map((t) => t.id) });
+
+    const { setCurrentWave } = await import('../services/state-service.js');
+    setCurrentWave(sprintId, nextWave);
+
+    const { enqueueNextWave } = await import('../queues/queue-manager.js');
+    await enqueueNextWave(sprintId, nextWave);
   });
+}
 
-  if (!allDone) return;
+/**
+ * After a bug task completes, check if all bug tasks for the same review cycle are done.
+ * If so, finalize git and trigger the next review cycle.
+ */
+async function checkBugCycleCompletion(sprintId: string, reviewCycle: number): Promise<void> {
+  await withTransitionLock(`bugs-${sprintId}`, async () => {
+    const sprint = getSprint(sprintId);
+    if (!sprint?.plan) return;
 
-  log.info(`Wave ${wave} complete for ${sprintId}`);
-  broadcast({ type: 'wave:completed', sprintId, wave });
+    // Find all bug tasks for this review cycle
+    const cycleBugTasks = sprint.plan.tasks.filter(
+      (t) => t.type === 'bug' && t.reviewCycle === reviewCycle,
+    );
+    const allDone = cycleBugTasks.every((t) => {
+      const state = sprint.tasks.get(t.id);
+      return state?.status === 'completed';
+    });
 
-  const developers = sprint.developers.map((dev) => ({ id: dev.id, name: dev.name }));
+    if (!allDone) return;
 
-  // Find the next wave
-  const nextWave = wave + 1;
-  const nextWaveTasks = sprint.plan.tasks.filter((t) =>
-    (t.wave || 1) === nextWave && t.assigned_to
-  );
+    log.info(`All ${cycleBugTasks.length} bug tasks for review cycle ${reviewCycle} complete in ${sprintId}`);
 
-  const conflictResolver = createConflictResolver(sprintId);
-
-  if (nextWaveTasks.length === 0) {
-    // No more implementation waves — finalize git and move to testing
-    log.info(`All implementation waves complete for ${sprintId}, finalizing git`);
+    const developers = sprint.developers.map((dev) => ({ id: dev.id, name: dev.name }));
+    const conflictResolver = createConflictResolver(sprintId);
 
     const { finalizeImplementation } = await import('../services/git-service.js');
     await finalizeImplementation(sprint.targetDir, sprintId, developers, conflictResolver);
@@ -517,72 +618,7 @@ async function checkWaveCompletion(sprintId: string, wave: number): Promise<void
     setSprintStatus(sprintId, 'reviewing');
     broadcast({ type: 'sprint:status', sprintId, status: 'reviewing' });
 
-    const { enqueueTesting } = await import('../queues/queue-manager.js');
-    await enqueueTesting(sprintId);
-    return;
-  }
-
-  // Merge this wave's work and reset worktrees for the next wave
-  log.info(`Merging wave ${wave} and preparing wave ${nextWave} for ${sprintId}`);
-  const { mergeWaveAndReset } = await import('../services/git-service.js');
-  const mergeResults = await mergeWaveAndReset(sprint.targetDir, sprintId, developers, conflictResolver);
-
-  const failedMerges = mergeResults.filter((r) => !r.success);
-  for (const dev of developers) {
-    const idx = developers.findIndex((d) => d.id === dev.id);
-    const devId = dev.id;
-    const result = mergeResults[idx];
-    if (result) {
-      broadcast({ type: 'merge:completed', sprintId, developerId: devId, success: result.success, conflicts: result.conflicts });
-    }
-  }
-  if (failedMerges.length > 0) {
-    log.warn(`Merge conflicts after wave ${wave} (${failedMerges.length} unresolved)`, { conflicts: failedMerges.map((c) => c.conflicts) });
-    broadcast({ type: 'error', sprintId, message: `${failedMerges.length} merge conflict(s) could not be resolved after wave ${wave} — continuing to next wave` });
-  }
-
-  // Always enqueue next wave, even if some merges failed
-  log.info(`Starting wave ${nextWave} for ${sprintId} (${nextWaveTasks.length} tasks)`);
-  broadcast({ type: 'wave:started', sprintId, wave: nextWave, taskIds: nextWaveTasks.map((t) => t.id) });
-
-  const { setCurrentWave } = await import('../services/state-service.js');
-  setCurrentWave(sprintId, nextWave);
-
-  const { enqueueNextWave } = await import('../queues/queue-manager.js');
-  await enqueueNextWave(sprintId, nextWave);
-}
-
-/**
- * After a bug task completes, check if all bug tasks for the same review cycle are done.
- * If so, finalize git and trigger the next review cycle.
- */
-async function checkBugCycleCompletion(sprintId: string, reviewCycle: number): Promise<void> {
-  const sprint = getSprint(sprintId);
-  if (!sprint?.plan) return;
-
-  // Find all bug tasks for this review cycle
-  const cycleBugTasks = sprint.plan.tasks.filter(
-    (t) => t.type === 'bug' && t.reviewCycle === reviewCycle,
-  );
-  const allDone = cycleBugTasks.every((t) => {
-    const state = sprint.tasks.get(t.id);
-    return state?.status === 'completed';
+    const { enqueueReview } = await import('../queues/queue-manager.js');
+    await enqueueReview(sprintId, reviewCycle + 1);
   });
-
-  if (!allDone) return;
-
-  log.info(`All ${cycleBugTasks.length} bug tasks for review cycle ${reviewCycle} complete in ${sprintId}`);
-
-  const developers = sprint.developers.map((dev) => ({ id: dev.id, name: dev.name }));
-  const conflictResolver = createConflictResolver(sprintId);
-
-  const { finalizeImplementation } = await import('../services/git-service.js');
-  await finalizeImplementation(sprint.targetDir, sprintId, developers, conflictResolver);
-
-  const { setSprintStatus } = await import('../services/state-service.js');
-  setSprintStatus(sprintId, 'reviewing');
-  broadcast({ type: 'sprint:status', sprintId, status: 'reviewing' });
-
-  const { enqueueReview } = await import('../queues/queue-manager.js');
-  await enqueueReview(sprintId, reviewCycle + 1);
 }

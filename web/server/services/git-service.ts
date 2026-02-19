@@ -165,18 +165,8 @@ export async function mergeDeveloperBranch(
   const suffix = friendlyName ? friendlyName.toLowerCase() : developerId;
   const devBranch = `sprint/${sprintId}--${suffix}`;
 
-  // Stash any uncommitted changes before checkout/merge
-  let stashed = false;
-  try {
-    const status = await git(['status', '--porcelain'], targetDir);
-    if (status.trim()) {
-      await git(['stash', 'push', '-m', `pre-merge-${devBranch}`], targetDir);
-      stashed = true;
-      log.info(`Stashed uncommitted changes before merge`, { devBranch });
-    }
-  } catch {
-    // If stash fails, continue anyway — merge may still work
-  }
+  // NOTE: Caller (mergeWaveAndReset) handles stashing. Do not stash here
+  // to avoid double-stash issues that can leave orphaned staged changes.
 
   // Ensure we're on the sprint branch
   await git(['checkout', sprintBranch], targetDir);
@@ -184,9 +174,6 @@ export async function mergeDeveloperBranch(
   try {
     await git(['merge', devBranch, '--no-edit'], targetDir);
     log.info(`Merged ${devBranch} into ${sprintBranch}`);
-    if (stashed) {
-      try { await git(['stash', 'pop'], targetDir); } catch { log.warn('Stash pop failed after merge — may need manual cleanup'); }
-    }
     return { success: true };
   } catch (err) {
     // Check git state for conflicts instead of parsing error strings
@@ -214,13 +201,7 @@ export async function mergeDeveloperBranch(
 
       // Resolver not provided, failed, or left conflicts — abort
       await git(['merge', '--abort'], targetDir);
-      if (stashed) {
-        try { await git(['stash', 'pop'], targetDir); } catch { log.warn('Stash pop failed after merge abort'); }
-      }
       return { success: false, conflicts };
-    }
-    if (stashed) {
-      try { await git(['stash', 'pop'], targetDir); } catch { log.warn('Stash pop failed after merge error'); }
     }
     throw err;
   }
@@ -424,6 +405,15 @@ export async function mergeWaveAndReset(
     if (!result.success) {
       log.warn(`Merge conflict from ${dev.name}`, { conflicts: result.conflicts });
     }
+  }
+
+  // Safety net: commit any orphaned staged changes left by partial conflict resolution
+  try {
+    await git(['diff', '--cached', '--quiet'], targetDir, true);
+  } catch {
+    // Has staged changes — commit them so they don't block subsequent operations
+    log.warn('Found orphaned staged changes after merge — committing');
+    await git(['commit', '-m', `merge: finalize wave merge for ${sprintId}`], targetDir);
   }
 
   // Reset worktrees for the next wave
