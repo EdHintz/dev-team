@@ -109,7 +109,7 @@ export function PlanningPage() {
               <div className="flex items-center gap-2 mb-3">
                 <div className="w-3 h-3 rounded-full bg-cyan-500" />
                 <h3 className="text-sm font-semibold text-cyan-400">Researcher</h3>
-                {sprint.status === 'researching' && researcherLogs.length > 0 && (
+                {sprint.status === 'researching' && (
                   <span className="text-xs text-cyan-600 animate-pulse">Analyzing codebase...</span>
                 )}
               </div>
@@ -122,7 +122,7 @@ export function PlanningPage() {
               <div className="flex items-center gap-2 mb-3">
                 <div className="w-3 h-3 rounded-full bg-indigo-500" />
                 <h3 className="text-sm font-semibold text-indigo-400">Planner</h3>
-                {sprint.status === 'planning' && plannerLogs.length > 0 && (
+                {sprint.status === 'planning' && (
                   <span className="text-xs text-indigo-600 animate-pulse">Creating task plan...</span>
                 )}
               </div>

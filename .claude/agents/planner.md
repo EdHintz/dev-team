@@ -57,7 +57,7 @@ Produce a JSON object written to `sprints/<sprint-id>/plan.json`:
 ### Time Estimates
 
 Include an `estimates` object with four fields:
-- **`ai_team`**: Human-readable estimated wall-clock time for this AI dev team (with the given number of developers working in parallel waves) to complete the sprint. Consider that each small task takes roughly 3 minutes, and tasks within the same wave run in parallel.
+- **`ai_team`**: Human-readable estimated wall-clock time for this AI dev team (with the given number of developers working in parallel waves) to complete the sprint. Consider that each small task takes roughly 5-7 minutes (accounting for agent startup, thinking, tool calls, and occasional retries), and tasks within the same wave run in parallel. Be realistic — don't assume best-case timing.
 - **`human_team`**: Human-readable estimated time for the same number of human developers to implement the same spec, using typical human development speeds (including code review, testing, debugging). Use realistic professional estimates.
 - **`ai_team_minutes`**: Numeric estimate in minutes for the AI team (e.g., 25). Must be a plain number.
 - **`human_team_minutes`**: Numeric estimate in minutes for the human team. Convert days to working minutes (1 day = 8 hours = 480 minutes). For ranges like "3-4 days", use the midpoint (e.g., 3.5 * 480 = 1680). Must be a plain number.

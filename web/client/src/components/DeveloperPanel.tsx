@@ -38,6 +38,7 @@ export function DeveloperPanel({
         <div className="mb-3">
           <div className="flex items-center gap-2 text-sm">
             <TaskStatusBadge status={currentTask.status} />
+            <span className="text-gray-500 font-mono text-xs">#{currentTask.taskId}</span>
             <span className="text-gray-300">{currentTask.title || `Task ${currentTask.taskId}`}</span>
           </div>
         </div>
